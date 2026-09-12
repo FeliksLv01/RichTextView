@@ -9,7 +9,7 @@ Markdown is one built-in input adapter. It converts a Markdown AST into the
 same node tree; it is not the renderer's underlying data model.
 
 The library does not include application-specific message, routing, analytics,
-theme, networking, or image-cache dependencies.
+networking, or image-cache dependencies.
 
 ## Example
 
@@ -60,6 +60,9 @@ pod 'RichTextView/Markdown', '0.1.0'
 
 The adapter uses the static `Markdown.xcframework` published by
 [`swift-markdown-xcframework`](https://github.com/FeliksLv01/swift-markdown-xcframework).
+The core product consumes pinned static Tree-sitter XCFrameworks from
+[`RichTextViewTreeSitter`](https://github.com/FeliksLv01/RichTextViewTreeSitter);
+consumers do not compile or clone Tree-sitter source code.
 
 ## Render a node tree
 
@@ -138,10 +141,19 @@ tokens. Fenced code preserves source lines and scrolls horizontally when a line
 exceeds the viewport; a language header provides a direct Copy action. Hosts can
 provide cached syntax-highlighted attributed text through
 `codeBlockPresentation`. RichTextView also exposes one global
-`RichCodeBlockHighlightingPlugin` slot for an optional reusable highlighting
-implementation. The Example registers `RichTextViewTreeSitter` through this
-API at launch; syntax highlighting remains an optional dependency outside the
-core renderer.
+`RichCodeBlockHighlightingPlugin` slot for a custom reusable implementation.
+The built-in implementation is registered once at application launch and is
+then retained and reused across renders:
+
+```swift
+RichCodeBlockHighlighting.useBuiltIn(theme: .github)
+```
+
+Its implementation details remain internal: the public API only contains
+generic `RichCodeHighlightTheme` and token-style models. Four presets are
+included: `.github`, `.xcode`, `.monokai`, and `.dracula`. The current bundled
+grammar highlights Swift (`swift` and `swiftlang`); unknown languages fall back
+to the normal plain-text code-block presentation.
 
 Markdown tables are rendered by the core library as horizontally scrollable
 attachments. Cells still use the same node-tree renderer, so links, inline

@@ -29,5 +29,11 @@ jobs:
           curl --fail --location --output /tmp/Markdown.xcframework.zip \
             https://github.com/FeliksLv01/swift-markdown-xcframework/releases/download/swift-markdown-0.8.0-patch.1/Markdown.xcframework.zip
           ditto -x -k /tmp/Markdown.xcframework.zip ../swift-markdown-xcframework
+      - name: Prepare RichTextViewTreeSitterBinary dependency
+        run: |
+          git clone --depth 1 https://github.com/FeliksLv01/RichTextViewTreeSitter.git ../RichTextViewTreeSitter
+          curl --fail --location --output /tmp/RichTextViewTreeSitter.xcframeworks.zip \
+            https://github.com/FeliksLv01/RichTextViewTreeSitter/releases/download/tree-sitter-0.25.10.1/RichTextViewTreeSitter.xcframeworks.zip
+          ditto -x -k /tmp/RichTextViewTreeSitter.xcframeworks.zip ../RichTextViewTreeSitter
       - name: Validate with CocoaPods
         run: ./Scripts/test-cocoapods.sh

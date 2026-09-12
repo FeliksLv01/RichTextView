@@ -7,9 +7,6 @@ options:
 packages:
   RichTextView:
     path: ..
-  RichTextViewTreeSitter:
-    url: https://github.com/FeliksLv01/RichTextViewTreeSitter.git
-    branch: main
 
 targets:
   RichTextViewExample:
@@ -22,8 +19,6 @@ targets:
         product: RichTextView
       - package: RichTextView
         product: RichTextViewMarkdown
-      - package: RichTextViewTreeSitter
-        product: RichTextViewTreeSitter
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.felikslv01.RichTextViewExample

@@ -9,6 +9,16 @@ public protocol RichCodeBlockHighlightingPlugin: AnyObject, Sendable {
 }
 
 public enum RichCodeBlockHighlighting {
+    public static func useBuiltIn(
+        theme: RichCodeHighlightTheme = .default,
+        maximumCachedCodeBlocks: Int = 64
+    ) {
+        register(RichBuiltInCodeBlockHighlightingPlugin(
+            theme: theme,
+            maximumCachedCodeBlocks: maximumCachedCodeBlocks
+        ))
+    }
+
     public static func register(_ plugin: any RichCodeBlockHighlightingPlugin) {
         storage.setPlugin(plugin)
     }

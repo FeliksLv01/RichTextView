@@ -1,5 +1,4 @@
 import RichTextView
-import RichTextViewTreeSitter
 import UIKit
 
 @main
@@ -8,9 +7,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        RichCodeBlockHighlighting.register(
-            TreeSitterCodeBlockHighlightingPlugin(theme: .github)
-        )
+        RichCodeBlockHighlighting.useBuiltIn(theme: .github)
         return true
     }
 

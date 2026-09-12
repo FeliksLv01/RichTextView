@@ -148,6 +148,25 @@ final class RichMarkdownParserTests: XCTestCase {
         XCTAssertEqual(plugin.callCount, 1)
     }
 
+    func testBuiltInCodeBlockHighlightingParsesSwiftAndFallsBackForUnknownLanguage() throws {
+        RichCodeBlockHighlighting.useBuiltIn(theme: .github)
+        defer { RichCodeBlockHighlighting.unregister() }
+
+        let presentation = try XCTUnwrap(RichCodeBlockHighlighting.presentation(
+            for: "let value = 42",
+            language: "swift",
+            nodeID: "built-in-code"
+        ))
+
+        XCTAssertEqual(presentation.attributedCode.string, "let value = 42")
+        XCTAssertNotNil(presentation.attributedCode.attribute(.foregroundColor, at: 0, effectiveRange: nil))
+        XCTAssertNil(RichCodeBlockHighlighting.presentation(
+            for: "value",
+            language: "unsupported-language",
+            nodeID: "plain-code"
+        ))
+    }
+
     @MainActor
     func testExplicitResolverPrecedesRegisteredCodeBlockHighlightingPlugin() {
         let plugin = TestCodePlugin(color: .systemGreen)
