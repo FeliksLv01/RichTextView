@@ -48,6 +48,10 @@ public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
             content: content,
             code: code,
             context: context
+        ) ?? RichCodeBlockHighlighting.presentation(
+            for: code,
+            language: content.language,
+            nodeID: node.id
         )
         let attributedCode = normalizedCode(
             presentation?.attributedCode ?? NSAttributedString(string: code),

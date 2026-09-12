@@ -7,9 +7,8 @@ options:
 packages:
   RichTextView:
     path: ..
-  HighlighterSwift:
-    url: https://github.com/smittytone/HighlighterSwift
-    from: 3.1.0
+  RichTextViewTreeSitter:
+    path: ../../RichTextViewTreeSitter
 
 targets:
   RichTextViewExample:
@@ -22,8 +21,8 @@ targets:
         product: RichTextView
       - package: RichTextView
         product: RichTextViewMarkdown
-      - package: HighlighterSwift
-        product: Highlighter
+      - package: RichTextViewTreeSitter
+        product: RichTextViewTreeSitter
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.felikslv01.RichTextViewExample

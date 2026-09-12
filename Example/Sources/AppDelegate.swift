@@ -1,7 +1,19 @@
+import RichTextView
+import RichTextViewTreeSitter
 import UIKit
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        RichCodeBlockHighlighting.register(
+            TreeSitterCodeBlockHighlightingPlugin(theme: .github)
+        )
+        return true
+    }
+
     func application(
         _ application: UIApplication,
         configurationForConnecting connectingSceneSession: UISceneSession,

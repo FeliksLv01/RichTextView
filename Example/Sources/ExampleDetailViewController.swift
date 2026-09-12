@@ -8,6 +8,7 @@ final class ExampleDetailViewController: UIViewController {
     private let noteLabel = UILabel()
     private let imageLoader = ExampleRemoteImageLoader()
     private let selectionMenuPresenter = ExampleSelectionMenuPresenter()
+    private let contentResolver = ExampleContentResolver()
     private lazy var richTextView = RichTextView(imageLoader: imageLoader)
     private var renderedWidth: CGFloat = 0
 
@@ -37,7 +38,11 @@ final class ExampleDetailViewController: UIViewController {
         let contentWidth = max(0, scrollView.bounds.width - horizontalInset * 2)
         if contentWidth > 0, abs(contentWidth - renderedWidth) > 0.5 {
             renderedWidth = contentWidth
-            example.apply(to: richTextView, constrainedWidth: contentWidth)
+            example.apply(
+                to: richTextView,
+                constrainedWidth: contentWidth,
+                resolver: contentResolver
+            )
         }
         let noteHeight = noteLabel.sizeThatFits(
             CGSize(width: contentWidth, height: .greatestFiniteMagnitude)
@@ -63,7 +68,11 @@ final class ExampleDetailViewController: UIViewController {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
-        example.apply(to: richTextView, constrainedWidth: max(1, renderedWidth))
+        example.apply(
+            to: richTextView,
+            constrainedWidth: max(1, renderedWidth),
+            resolver: contentResolver
+        )
     }
 
     private func configureViews() {

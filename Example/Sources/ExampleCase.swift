@@ -44,17 +44,31 @@ enum ExampleCase: CaseIterable {
     }
 
     @MainActor
-    func apply(to richTextView: RichTextView, constrainedWidth: CGFloat) {
+    func apply(
+        to richTextView: RichTextView,
+        constrainedWidth: CGFloat,
+        resolver: any RichContentPresentationResolving
+    ) {
         switch self {
         case .string:
             applyString(to: richTextView)
         case .attributedImageMix:
             applyAttributedImageMix(to: richTextView)
         case .nodeTree:
-            apply(document: Self.nodeTreeDocument, to: richTextView, constrainedWidth: constrainedWidth)
+            apply(
+                document: Self.nodeTreeDocument,
+                to: richTextView,
+                constrainedWidth: constrainedWidth,
+                resolver: resolver
+            )
         case .markdownSelection:
             let parsed = RichMarkdownParser().parse(Self.markdown, documentID: "markdown-example")
-            apply(document: parsed.document, to: richTextView, constrainedWidth: constrainedWidth)
+            apply(
+                document: parsed.document,
+                to: richTextView,
+                constrainedWidth: constrainedWidth,
+                resolver: resolver
+            )
         }
     }
 
@@ -103,13 +117,14 @@ enum ExampleCase: CaseIterable {
     private func apply(
         document: RichContentDocument,
         to richTextView: RichTextView,
-        constrainedWidth: CGFloat
+        constrainedWidth: CGFloat,
+        resolver: any RichContentPresentationResolving
     ) {
         let result = RichContentRenderer().render(
             document: document,
             constrainedWidth: constrainedWidth,
             configuration: Self.renderingConfiguration,
-            resolver: ExampleContentResolver()
+            resolver: resolver
         )
         richTextView.apply(result.snapshot)
     }
@@ -301,9 +316,7 @@ enum ExampleCase: CaseIterable {
     }
 }
 
-private final class ExampleContentResolver: RichContentPresentationResolving {
-    private let codeHighlighter = ExampleCodeHighlighter()
-
+final class ExampleContentResolver: RichContentPresentationResolving {
     func imagePresentation(
         for node: RichContentNode,
         content: RichImageContent
@@ -321,14 +334,4 @@ private final class ExampleContentResolver: RichContentPresentationResolving {
         )
     }
 
-    func codeBlockPresentation(
-        for node: RichContentNode,
-        content: RichCodeBlockContent,
-        code: String,
-        context: RichContentRenderContext
-    ) -> RichCodeBlockPresentation? {
-        RichCodeBlockPresentation(
-            attributedCode: codeHighlighter.highlight(code: code, language: content.language)
-        )
-    }
 }

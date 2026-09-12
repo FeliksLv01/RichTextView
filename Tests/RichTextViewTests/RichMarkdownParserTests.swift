@@ -80,6 +80,43 @@ final class RichMarkdownParserTests: XCTestCase {
         XCTAssertTrue(view.isTextSelectionEnabled)
     }
 
+    @MainActor
+    func testRegisteredCodeBlockHighlightingPluginIsUsed() {
+        let plugin = TestCodePlugin(color: .systemGreen)
+        RichCodeBlockHighlighting.register(plugin)
+        defer { RichCodeBlockHighlighting.unregister() }
+
+        renderCodeBlock(resolver: nil)
+
+        XCTAssertEqual(plugin.callCount, 1)
+    }
+
+    @MainActor
+    func testExplicitResolverPrecedesRegisteredCodeBlockHighlightingPlugin() {
+        let plugin = TestCodePlugin(color: .systemGreen)
+        RichCodeBlockHighlighting.register(plugin)
+        defer { RichCodeBlockHighlighting.unregister() }
+
+        renderCodeBlock(resolver: TestCodeResolver())
+
+        XCTAssertEqual(plugin.callCount, 0)
+    }
+
+    private func renderCodeBlock(
+        resolver: (any RichContentPresentationResolving)?
+    ) {
+        let parsed = RichMarkdownParser().parse(
+            "```swift\nlet value = 42\n```",
+            documentID: "plugin-code"
+        )
+        _ = RichContentRenderer().render(
+            document: parsed.document,
+            constrainedWidth: 320,
+            configuration: .standard,
+            resolver: resolver
+        )
+    }
+
     private func containsImage(_ element: RichElement) -> Bool {
         if element is RichImageElement { return true }
         return (element as? RichContainerElement)?.children.contains(where: containsImage) == true
@@ -114,6 +151,38 @@ final class RichMarkdownParserTests: XCTestCase {
                 attributedCode: NSAttributedString(
                     string: code,
                     attributes: [.foregroundColor: UIColor.systemPink]
+                )
+            )
+        }
+    }
+
+    private final class TestCodePlugin: RichCodeBlockHighlightingPlugin, @unchecked Sendable {
+        private let color: UIColor
+        private let lock = NSLock()
+        private var storedCallCount = 0
+
+        var callCount: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedCallCount
+        }
+
+        init(color: UIColor) {
+            self.color = color
+        }
+
+        func codeBlockPresentation(
+            for code: String,
+            language: String,
+            nodeID: String
+        ) -> RichCodeBlockPresentation? {
+            lock.lock()
+            storedCallCount += 1
+            lock.unlock()
+            return RichCodeBlockPresentation(
+                attributedCode: NSAttributedString(
+                    string: code,
+                    attributes: [.foregroundColor: color]
                 )
             )
         }

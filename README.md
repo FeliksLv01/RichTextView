@@ -137,8 +137,11 @@ fenced code blocks use independent text, background, inset, and corner-radius
 tokens. Fenced code preserves source lines and scrolls horizontally when a line
 exceeds the viewport; a language header provides a direct Copy action. Hosts can
 provide cached syntax-highlighted attributed text through
-`codeBlockPresentation`. The Example uses HighlighterSwift as one replaceable
-integration; it is not a dependency of the core renderer.
+`codeBlockPresentation`. RichTextView also exposes one global
+`RichCodeBlockHighlightingPlugin` slot for an optional reusable highlighting
+implementation. The Example registers `RichTextViewTreeSitter` through this
+API at launch; syntax highlighting remains an optional dependency outside the
+core renderer.
 
 ## Streaming updates
 
