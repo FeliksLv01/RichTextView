@@ -105,12 +105,19 @@ view.apply(rendered.snapshot)
 See [Architecture](Documentation/Architecture.md) for extension points,
 threading, attachments, images, interaction, and selection.
 
+Enable native long-press selection and copy for any rendered input, including
+Markdown normalized through `RichTextViewMarkdown`:
+
+```swift
+richTextView.isTextSelectionEnabled = true
+```
+
 ## Example app
 
-The [Example](Example) app uses the iOS 15 scene lifecycle, consumes this
-repository as a local Swift package, and demonstrates `String`,
-`NSAttributedString`, a directly constructed node tree, and the Markdown
-adapter.
+The [Example](Example) app uses the iOS 15 scene lifecycle and consumes this
+repository as a local Swift package. Its table-based catalog opens a detail page
+for each integration style: `String`, attributed image-text mixing, a complex
+typed node tree, and selectable Markdown.
 Generate and build its Xcode project with:
 
 ```bash

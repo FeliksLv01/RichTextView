@@ -38,7 +38,7 @@ public extension RichContentElementBuilderRegistry {
             RichColumnsElementBuilder(), RichColumnElementBuilder(), RichReferenceElementBuilder(),
             RichNumberedListElementBuilder(), RichBulletedListElementBuilder(), RichBlockQuoteElementBuilder(),
             RichTextElementBuilder(), RichMentionElementBuilder(), RichEmojiElementBuilder(),
-            RichLinkElementBuilder(), RichCommandElementBuilder()
+            RichImageElementBuilder(), RichLinkElementBuilder(), RichCommandElementBuilder()
         ])
     }
 }

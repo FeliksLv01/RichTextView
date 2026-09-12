@@ -74,6 +74,7 @@ public protocol RichContentPresentationResolving: AnyObject {
     func overrideElement(for node: RichContentNode, context: RichContentRenderContext) -> RichElement?
     func mentionPresentation(for node: RichContentNode, content: RichMentionContent) -> RichMentionPresentation?
     func emojiPresentation(for node: RichContentNode, content: RichEmojiContent) -> RichInlineImagePresentation?
+    func imagePresentation(for node: RichContentNode, content: RichImageContent) -> RichInlineImagePresentation?
     func linkIconPresentation(for node: RichContentNode, content: RichLinkContent) -> RichInlineImagePresentation?
     func resolvedLink(for node: RichContentNode, content: RichLinkContent) -> RichContentResolvedLink?
 }
@@ -82,6 +83,7 @@ public extension RichContentPresentationResolving {
     func overrideElement(for node: RichContentNode, context: RichContentRenderContext) -> RichElement? { nil }
     func mentionPresentation(for node: RichContentNode, content: RichMentionContent) -> RichMentionPresentation? { nil }
     func emojiPresentation(for node: RichContentNode, content: RichEmojiContent) -> RichInlineImagePresentation? { nil }
+    func imagePresentation(for node: RichContentNode, content: RichImageContent) -> RichInlineImagePresentation? { nil }
     func linkIconPresentation(for node: RichContentNode, content: RichLinkContent) -> RichInlineImagePresentation? { nil }
     func resolvedLink(for node: RichContentNode, content: RichLinkContent) -> RichContentResolvedLink? { nil }
 }
