@@ -10,10 +10,12 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
-      - name: Install xcbeautify
-        run: brew install xcbeautify
+      - name: Install build tools
+        run: brew install xcbeautify xcodegen
       - name: Build with Swift Package Manager
         run: ./Scripts/test-swiftpm.sh
+      - name: Build example app
+        run: ./Scripts/test-example.sh
 
   cocoapods:
     runs-on: macos-26

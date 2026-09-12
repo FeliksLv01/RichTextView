@@ -104,3 +104,16 @@ view.apply(rendered.snapshot)
 
 See [Architecture](Documentation/Architecture.md) for extension points,
 threading, attachments, images, interaction, and selection.
+
+## Example app
+
+The [Example](Example) app consumes this repository as a local Swift package and
+demonstrates both a directly constructed node tree and the Markdown adapter.
+Generate and build its Xcode project with:
+
+```bash
+./Scripts/test-example.sh
+```
+
+`Example/RichTextViewExample.xcodeproj` is generated from
+`Example/project.yml` by XcodeGen and is intentionally not committed.

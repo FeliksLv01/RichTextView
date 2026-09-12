@@ -1,0 +1,39 @@
+name: RichTextViewExample
+
+options:
+  deploymentTarget:
+    iOS: "15.0"
+
+packages:
+  RichTextView:
+    path: ..
+
+targets:
+  RichTextViewExample:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - package: RichTextView
+        product: RichTextView
+      - package: RichTextView
+        product: RichTextViewMarkdown
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.felikslv01.RichTextViewExample
+        PRODUCT_NAME: RichTextViewExample
+        SWIFT_VERSION: 5.9
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: NO
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+
+schemes:
+  RichTextViewExample:
+    build:
+      targets:
+        RichTextViewExample: all
+    run:
+      config: Debug

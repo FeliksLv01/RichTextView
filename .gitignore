@@ -6,3 +6,4 @@ Pods/
 Package.resolved
 *.xcuserstate
 .DS_Store
+Example/*.xcodeproj/
