@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+DerivedData/
+Pods/
+*.xcworkspace
+Package.resolved
+*.xcuserstate
+.DS_Store

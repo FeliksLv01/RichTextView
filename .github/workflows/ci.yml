@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  swiftpm:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install xcbeautify
+        run: brew install xcbeautify
+      - name: Build with Swift Package Manager
+        run: ./Scripts/test-swiftpm.sh
+
+  cocoapods:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install tools
+        run: brew install cocoapods xcbeautify
+      - name: Prepare SwiftMarkdownBinary dependency
+        run: |
+          git clone --depth 1 https://github.com/FeliksLv01/swift-markdown-xcframework.git ../swift-markdown-xcframework
+          curl --fail --location --output /tmp/Markdown.xcframework.zip \
+            https://github.com/FeliksLv01/swift-markdown-xcframework/releases/download/swift-markdown-0.8.0-patch.1/Markdown.xcframework.zip
+          ditto -x -k /tmp/Markdown.xcframework.zip ../swift-markdown-xcframework
+      - name: Validate with CocoaPods
+        run: ./Scripts/test-cocoapods.sh
