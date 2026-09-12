@@ -35,7 +35,7 @@ enum ExampleCase: CaseIterable {
         case .nodeTree:
             "Application data is represented by stable node IDs and rendered without going through Markdown."
         case .markdownSelection:
-            "Text selection is enabled. Long-press the rendered content to select text and use the copy menu."
+            "Text selection is enabled. Long-press, adjust the handles if needed, then use the anchored Copy menu."
         }
     }
 
@@ -178,7 +178,7 @@ enum ExampleCase: CaseIterable {
                         RichContentNode(
                             id: "inline-image",
                             type: .image,
-                            content: RichImageContent(source: "example://photo", title: "Photo")
+                            content: RichImageContent(source: Self.remoteImageURL, title: "Remote GitHub image")
                         ),
                         RichContentNode(id: "emoji-prefix", type: .text, content: RichTextContent(text: " and reusable nodes ")),
                         RichContentNode(id: "emoji", type: .emoji, content: RichEmojiContent(code: ":sparkles:", name: "✨"))
@@ -223,7 +223,7 @@ enum ExampleCase: CaseIterable {
 
     Long-press anywhere in this document to select and copy text. The parser supports **bold**, *italic*, `inline code`, [links](https://github.com), and ~~double-tilde strikethrough~~.
 
-    Text before ![Photo](example://photo) continues after the inline image, demonstrating image and text mixing in Markdown.
+    Text before ![Remote GitHub image](https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png) continues after the network image, demonstrating image and text mixing in Markdown.
 
     > Block quotes use the same container-node layout as application-built documents.
 
@@ -238,6 +238,8 @@ enum ExampleCase: CaseIterable {
     view.isTextSelectionEnabled = true
     ```
     """
+
+    private static let remoteImageURL = "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
 }
 
 private final class ExampleImageResolver: RichContentPresentationResolving {
@@ -245,10 +247,14 @@ private final class ExampleImageResolver: RichContentPresentationResolving {
         for node: RichContentNode,
         content: RichImageContent
     ) -> RichInlineImagePresentation? {
-        let image = UIImage(systemName: "photo.fill")?.withTintColor(.systemBlue, renderingMode: .alwaysOriginal)
+        let placeholder = UIImage(systemName: "photo.fill")?.withTintColor(.systemBlue, renderingMode: .alwaysOriginal)
         return RichInlineImagePresentation(
-            source: RichImageSource(identifier: content.source, image: image),
-            size: CGSize(width: 26, height: 22),
+            source: RichImageSource(
+                identifier: content.source,
+                image: placeholder,
+                loadsRemotely: content.source.hasPrefix("https://")
+            ),
+            size: CGSize(width: 28, height: 24),
             copyText: content.title.isEmpty ? "[Image]" : "[\(content.title)]",
             accessibilityLabel: content.title.isEmpty ? "Image" : content.title
         )

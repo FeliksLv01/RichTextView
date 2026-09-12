@@ -112,6 +112,15 @@ Markdown normalized through `RichTextViewMarkdown`:
 richTextView.isTextSelectionEnabled = true
 ```
 
+The Example app also includes a complete host-side
+`RichSelectionMenuPresenting` implementation. It anchors a Copy menu to the
+selection, keeps handle gestures interactive, writes `selection.plainText` to
+the pasteboard, and clears the selection after the action completes.
+
+`ExampleRemoteImageLoader` shows the complementary image-loading boundary: the
+renderer keeps fixed image geometry while a cancellable `URLSession` request
+loads and caches HTTPS image data, then refreshes only the image display.
+
 ## Example app
 
 The [Example](Example) app uses the iOS 15 scene lifecycle and consumes this

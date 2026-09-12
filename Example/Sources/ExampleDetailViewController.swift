@@ -5,7 +5,9 @@ final class ExampleDetailViewController: UIViewController {
     private let example: ExampleCase
     private let scrollView = UIScrollView()
     private let noteLabel = UILabel()
-    private let richTextView = RichTextView()
+    private let imageLoader = ExampleRemoteImageLoader()
+    private let selectionMenuPresenter = ExampleSelectionMenuPresenter()
+    private lazy var richTextView = RichTextView(imageLoader: imageLoader)
 
     init(example: ExampleCase) {
         self.example = example
@@ -64,9 +66,23 @@ final class ExampleDetailViewController: UIViewController {
         noteLabel.accessibilityIdentifier = "example.note"
         scrollView.addSubview(noteLabel)
 
-        richTextView.isTextSelectionEnabled = example.supportsSelection
-        richTextView.initialSelectionPolicy = .allContent
+        configureSelection()
         richTextView.accessibilityIdentifier = "example.content"
         scrollView.addSubview(richTextView)
+    }
+
+    private func configureSelection() {
+        guard example.supportsSelection else { return }
+        richTextView.initialSelectionPolicy = .currentLine
+        richTextView.selectionMenuPresenter = selectionMenuPresenter
+        richTextView.selectionMenuActions = { selection in
+            [RichSelectionMenuAction(
+                title: "Copy",
+                image: UIImage(systemName: "doc.on.doc")
+            ) {
+                UIPasteboard.general.string = selection.plainText
+            }]
+        }
+        richTextView.isTextSelectionEnabled = true
     }
 }
