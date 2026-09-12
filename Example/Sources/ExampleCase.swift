@@ -108,8 +108,8 @@ enum ExampleCase: CaseIterable {
         let result = RichContentRenderer().render(
             document: document,
             constrainedWidth: constrainedWidth,
-            configuration: .standard,
-            resolver: ExampleImageResolver()
+            configuration: Self.renderingConfiguration,
+            resolver: ExampleContentResolver()
         )
         richTextView.apply(result.snapshot)
     }
@@ -199,6 +199,41 @@ enum ExampleCase: CaseIterable {
                     ]
                 ),
                 RichContentNode(
+                    id: "semantic-colors",
+                    type: .paragraph,
+                    children: [
+                        RichContentNode(
+                            id: "foreground-label",
+                            type: .text,
+                            content: RichTextContent(
+                                text: "Custom foreground",
+                                style: RichTextStyle(bold: true, foregroundColor: "systemOrange")
+                            )
+                        ),
+                        RichContentNode(id: "color-separator", type: .text, content: RichTextContent(text: " and ")),
+                        RichContentNode(
+                            id: "background-label",
+                            type: .text,
+                            content: RichTextContent(
+                                text: "semantic background",
+                                style: RichTextStyle(backgroundColor: "secondarySystemFill")
+                            )
+                        )
+                    ]
+                ),
+                RichContentNode(
+                    id: "swift-code",
+                    type: .codeBlock,
+                    content: RichCodeBlockContent(language: "swift"),
+                    children: [
+                        RichContentNode(
+                            id: "swift-code-text",
+                            type: .text,
+                            content: RichTextContent(text: "let greeting = \"Hello, RichTextView\"\nprint(greeting) // highlighted\nlet renderer = RichContentRenderer().render(document: document, constrainedWidth: 320, configuration: .standard)")
+                        )
+                    ]
+                ),
+                RichContentNode(
                     id: "list-one",
                     type: .numberedList,
                     content: RichListContent(level: 1, index: 1),
@@ -236,13 +271,39 @@ enum ExampleCase: CaseIterable {
     ```swift
     let view = RichTextView()
     view.isTextSelectionEnabled = true
+    let renderer = RichContentRenderer().render(document: document, constrainedWidth: 320, configuration: .standard)
     ```
     """
 
     private static let remoteImageURL = "https://github.githubassets.com/images/modules/logos_page/GitHub-Logo.png"
+
+    private static var renderingConfiguration: RichContentRenderingConfiguration {
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        return RichContentRenderingConfiguration(
+            font: font,
+            lineHeight: font.lineHeight,
+            textColor: .label,
+            secondaryTextColor: .secondaryLabel,
+            linkColor: .link,
+            currentMentionTextColor: .label,
+            currentMentionBackgroundColor: .tertiarySystemFill,
+            contrastBackgroundColor: .secondarySystemBackground,
+            blockQuoteColor: .separator,
+            codeBackgroundColor: .tertiarySystemFill,
+            codeBlockTextColor: .label,
+            codeBlockBackgroundColor: .systemBackground,
+            codeBlockInsets: RichContainerInsets(top: 12, left: 16, bottom: 12, right: 16),
+            codeBlockCornerRadius: 8,
+            highlightTextColor: .label,
+            highlightBackgroundColor: UIColor.systemYellow.withAlphaComponent(0.35),
+            highlightTokens: ["select", "stable IDs"]
+        )
+    }
 }
 
-private final class ExampleImageResolver: RichContentPresentationResolving {
+private final class ExampleContentResolver: RichContentPresentationResolving {
+    private let codeHighlighter = ExampleCodeHighlighter()
+
     func imagePresentation(
         for node: RichContentNode,
         content: RichImageContent
@@ -257,6 +318,17 @@ private final class ExampleImageResolver: RichContentPresentationResolving {
             size: CGSize(width: 64, height: 28),
             copyText: content.title.isEmpty ? "[Image]" : "[\(content.title)]",
             accessibilityLabel: content.title.isEmpty ? "Image" : content.title
+        )
+    }
+
+    func codeBlockPresentation(
+        for node: RichContentNode,
+        content: RichCodeBlockContent,
+        code: String,
+        context: RichContentRenderContext
+    ) -> RichCodeBlockPresentation? {
+        RichCodeBlockPresentation(
+            attributedCode: codeHighlighter.highlight(code: code, language: content.language)
         )
     }
 }

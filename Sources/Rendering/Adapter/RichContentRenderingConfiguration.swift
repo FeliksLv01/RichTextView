@@ -70,11 +70,36 @@ public struct RichInlineImagePresentation {
     }
 }
 
+public struct RichCodeBlockPresentation {
+    public let attributedCode: NSAttributedString
+    public let backgroundColor: UIColor?
+    public let contentInsets: RichContainerInsets?
+    public let cornerRadius: CGFloat?
+
+    public init(
+        attributedCode: NSAttributedString,
+        backgroundColor: UIColor? = nil,
+        contentInsets: RichContainerInsets? = nil,
+        cornerRadius: CGFloat? = nil
+    ) {
+        self.attributedCode = NSAttributedString(attributedString: attributedCode)
+        self.backgroundColor = backgroundColor
+        self.contentInsets = contentInsets
+        self.cornerRadius = cornerRadius
+    }
+}
+
 public protocol RichContentPresentationResolving: AnyObject {
     func overrideElement(for node: RichContentNode, context: RichContentRenderContext) -> RichElement?
     func mentionPresentation(for node: RichContentNode, content: RichMentionContent) -> RichMentionPresentation?
     func emojiPresentation(for node: RichContentNode, content: RichEmojiContent) -> RichInlineImagePresentation?
     func imagePresentation(for node: RichContentNode, content: RichImageContent) -> RichInlineImagePresentation?
+    func codeBlockPresentation(
+        for node: RichContentNode,
+        content: RichCodeBlockContent,
+        code: String,
+        context: RichContentRenderContext
+    ) -> RichCodeBlockPresentation?
     func linkIconPresentation(for node: RichContentNode, content: RichLinkContent) -> RichInlineImagePresentation?
     func resolvedLink(for node: RichContentNode, content: RichLinkContent) -> RichContentResolvedLink?
 }
@@ -84,6 +109,12 @@ public extension RichContentPresentationResolving {
     func mentionPresentation(for node: RichContentNode, content: RichMentionContent) -> RichMentionPresentation? { nil }
     func emojiPresentation(for node: RichContentNode, content: RichEmojiContent) -> RichInlineImagePresentation? { nil }
     func imagePresentation(for node: RichContentNode, content: RichImageContent) -> RichInlineImagePresentation? { nil }
+    func codeBlockPresentation(
+        for node: RichContentNode,
+        content: RichCodeBlockContent,
+        code: String,
+        context: RichContentRenderContext
+    ) -> RichCodeBlockPresentation? { nil }
     func linkIconPresentation(for node: RichContentNode, content: RichLinkContent) -> RichInlineImagePresentation? { nil }
     func resolvedLink(for node: RichContentNode, content: RichLinkContent) -> RichContentResolvedLink? { nil }
 }
@@ -100,6 +131,16 @@ public struct RichContentRenderingConfiguration {
     public let contrastBackgroundColor: UIColor
     public let blockQuoteColor: UIColor
     public let codeBackgroundColor: UIColor
+    public let inlineCodeFont: UIFont
+    public let inlineCodeInsets: UIEdgeInsets
+    public let inlineCodeCornerRadius: CGFloat
+    public let inlineCodeBorderColor: UIColor
+    public let inlineCodeBorderWidth: CGFloat
+    public let inlineCodeBaselineOffset: CGFloat
+    public let codeBlockTextColor: UIColor
+    public let codeBlockBackgroundColor: UIColor
+    public let codeBlockInsets: RichContainerInsets
+    public let codeBlockCornerRadius: CGFloat
     public let dividerColor: UIColor
     public let dividerHeight: CGFloat
     public let dividerExtent: CGFloat
@@ -127,6 +168,8 @@ public struct RichContentRenderingConfiguration {
             contrastBackgroundColor: .secondarySystemBackground,
             blockQuoteColor: .separator,
             codeBackgroundColor: .secondarySystemBackground,
+            codeBlockTextColor: .label,
+            codeBlockBackgroundColor: .systemBackground,
             highlightTextColor: .label,
             highlightBackgroundColor: .systemYellow
         )
@@ -144,6 +187,16 @@ public struct RichContentRenderingConfiguration {
         contrastBackgroundColor: UIColor,
         blockQuoteColor: UIColor,
         codeBackgroundColor: UIColor,
+        inlineCodeFont: UIFont = .systemFont(ofSize: 14),
+        inlineCodeInsets: UIEdgeInsets = UIEdgeInsets(top: 2, left: 4, bottom: 2, right: 4),
+        inlineCodeCornerRadius: CGFloat = 4,
+        inlineCodeBorderColor: UIColor = .separator,
+        inlineCodeBorderWidth: CGFloat = 1,
+        inlineCodeBaselineOffset: CGFloat = 1,
+        codeBlockTextColor: UIColor? = nil,
+        codeBlockBackgroundColor: UIColor? = nil,
+        codeBlockInsets: RichContainerInsets = RichContainerInsets(top: 12, left: 16, bottom: 12, right: 16),
+        codeBlockCornerRadius: CGFloat = 8,
         highlightTextColor: UIColor,
         highlightBackgroundColor: UIColor,
         highlightedMentionIDs: Set<String> = [],
@@ -169,6 +222,16 @@ public struct RichContentRenderingConfiguration {
         self.contrastBackgroundColor = contrastBackgroundColor
         self.blockQuoteColor = blockQuoteColor
         self.codeBackgroundColor = codeBackgroundColor
+        self.inlineCodeFont = inlineCodeFont
+        self.inlineCodeInsets = inlineCodeInsets
+        self.inlineCodeCornerRadius = max(0, inlineCodeCornerRadius)
+        self.inlineCodeBorderColor = inlineCodeBorderColor
+        self.inlineCodeBorderWidth = max(0, inlineCodeBorderWidth)
+        self.inlineCodeBaselineOffset = inlineCodeBaselineOffset
+        self.codeBlockTextColor = codeBlockTextColor ?? textColor
+        self.codeBlockBackgroundColor = codeBlockBackgroundColor ?? codeBackgroundColor
+        self.codeBlockInsets = codeBlockInsets
+        self.codeBlockCornerRadius = max(0, codeBlockCornerRadius)
         self.dividerColor = dividerColor ?? blockQuoteColor
         self.dividerHeight = dividerHeight
         self.dividerExtent = dividerExtent

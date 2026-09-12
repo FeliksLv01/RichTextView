@@ -15,6 +15,47 @@ final class RichMarkdownParserTests: XCTestCase {
     }
 
     @MainActor
+    func testInlineCodeAndFencedCodeUseDistinctPresentations() throws {
+        let parsed = RichMarkdownParser().parse(
+            "Use `inlineCode` here.\n\n```swift\nlet value = 42\n```",
+            documentID: "code"
+        )
+        let rendered = RichContentRenderer().render(
+            document: parsed.document,
+            constrainedWidth: 320,
+            configuration: .standard,
+            resolver: TestCodeResolver()
+        )
+        let elements = flattenElements(rendered.snapshot.root)
+        let inlineCode = try XCTUnwrap(elements.compactMap { $0 as? RichTextBadgeElement }.first {
+            $0.attributedText.string == "inlineCode"
+        })
+        let highlightedCode = try XCTUnwrap(elements.compactMap { $0 as? RichAttachmentElement }.first {
+            $0.reuseIdentifier == RichCodeBlockViewProvider.reuseIdentifier
+        })
+        let provider = try XCTUnwrap(highlightedCode.provider as? RichCodeBlockViewProvider)
+
+        XCTAssertNotNil(inlineCode.attributedText.attribute(.backgroundColor, at: 0, effectiveRange: nil))
+        XCTAssertEqual(inlineCode.cornerRadius, 4)
+        XCTAssertEqual(inlineCode.borderWidth, 1)
+        XCTAssertEqual(highlightedCode.copyText, "let value = 42")
+        XCTAssertTrue(highlightedCode.isSelectable)
+        XCTAssertGreaterThan(provider.requiredHeight, 24)
+        let longLine = NSAttributedString(
+            string: "view.isTextSelectionEnabled = true",
+            attributes: [.font: UIFont.monospacedSystemFont(ofSize: 17, weight: .regular)]
+        )
+        XCTAssertGreaterThan(
+            RichCodeBlockViewProvider.requiredContentSize(
+                for: longLine,
+                contentInsets: RichContainerInsets(top: 12, left: 16, bottom: 12, right: 16)
+            ).width,
+            320
+        )
+        XCTAssertTrue(rendered.unhandledNodeTypes.isEmpty)
+    }
+
+    @MainActor
     func testMarkdownEntryPointRendersThroughUnifiedNodeTree() {
         let parsed = RichMarkdownParser().parse(
             "# Title\n\nText before ![Image](example://image) and after.",
@@ -44,6 +85,10 @@ final class RichMarkdownParserTests: XCTestCase {
         return (element as? RichContainerElement)?.children.contains(where: containsImage) == true
     }
 
+    private func flattenElements(_ element: RichElement) -> [RichElement] {
+        [element] + element.children.flatMap(flattenElements)
+    }
+
     private final class TestImageResolver: RichContentPresentationResolving {
         func imagePresentation(
             for node: RichContentNode,
@@ -54,6 +99,22 @@ final class RichMarkdownParserTests: XCTestCase {
                 size: CGSize(width: 24, height: 20),
                 copyText: content.title,
                 accessibilityLabel: content.title
+            )
+        }
+    }
+
+    private final class TestCodeResolver: RichContentPresentationResolving {
+        func codeBlockPresentation(
+            for node: RichContentNode,
+            content: RichCodeBlockContent,
+            code: String,
+            context: RichContentRenderContext
+        ) -> RichCodeBlockPresentation? {
+            RichCodeBlockPresentation(
+                attributedCode: NSAttributedString(
+                    string: code,
+                    attributes: [.foregroundColor: UIColor.systemPink]
+                )
             )
         }
     }

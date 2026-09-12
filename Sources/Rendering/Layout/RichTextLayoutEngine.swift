@@ -1,6 +1,6 @@
 import UIKit
 
-public final class RichLayoutEngine: @unchecked Sendable {
+public final class RichTextLayoutEngine: @unchecked Sendable {
     private final class TextCacheKey: NSObject {
         let signature: Int
         let width: CGFloat
@@ -83,12 +83,12 @@ public final class RichLayoutEngine: @unchecked Sendable {
     public func layout(
         snapshot: RichElementSnapshot,
         constrainedTo constrainedSize: CGSize
-    ) -> RichLayout {
+    ) -> RichTextLayout {
         lock.lock()
         defer { lock.unlock() }
         let width = max(0, constrainedSize.width)
         guard width > 0 else {
-            return RichLayout(
+            return RichTextLayout(
                 rootElementID: snapshot.root.id,
                 constrainedSize: constrainedSize,
                 contentSize: .zero,
@@ -103,7 +103,7 @@ public final class RichLayoutEngine: @unchecked Sendable {
         state.flushInline(using: self)
 
         let height = ceil(state.cursorY)
-        let result = RichLayout(
+        let result = RichTextLayout(
             rootElementID: snapshot.root.id,
             constrainedSize: constrainedSize,
             contentSize: CGSize(width: ceil(state.maximumWidth), height: height),
@@ -182,6 +182,13 @@ public final class RichLayoutEngine: @unchecked Sendable {
     ) {
         guard let decoration = container.decoration else { return }
         switch decoration {
+        case .background:
+            let frame = CGRect(x: x, y: startY, width: state.width, height: max(0, endY - startY))
+            state.appendDecoration(RichDecorationRunBox(
+                id: "\(container.id)-decoration",
+                frame: frame,
+                decoration: decoration
+            ))
         case let .leadingRule(_, width):
             let frame = CGRect(x: x, y: startY, width: max(0, width), height: max(0, endY - startY))
             state.appendDecoration(RichDecorationRunBox(
@@ -346,6 +353,8 @@ public final class RichLayoutEngine: @unchecked Sendable {
                     contentInsets: badge.contentInsets,
                     outerInsets: badge.outerInsets,
                     cornerRadius: badge.cornerRadius,
+                    borderColor: badge.borderColor,
+                    borderWidth: badge.borderWidth,
                     baselineOffset: badge.baselineOffset
                 )
                 let range = NSRange(location: text.length, length: attachment.length)
@@ -354,7 +363,7 @@ public final class RichLayoutEngine: @unchecked Sendable {
                     elementID: badge.id,
                     range: range,
                     copyText: badge.copyText,
-                    actionIdentifier: badge.actionIdentifier
+                    actionIdentifier: badge.actionIdentifier.isEmpty ? nil : badge.actionIdentifier
                 ))
                 hasher.combine(badge.attributedText.richViewFingerprint)
                 hasher.combine(badge.contentInsets.top)
@@ -366,6 +375,8 @@ public final class RichLayoutEngine: @unchecked Sendable {
                 hasher.combine(badge.outerInsets.bottom)
                 hasher.combine(badge.outerInsets.right)
                 hasher.combine(badge.cornerRadius)
+                hasher.combine(badge.borderColor?.hash ?? 0)
+                hasher.combine(badge.borderWidth)
                 hasher.combine(badge.baselineOffset)
             case let textElement as RichTextElement:
                 let attributedText = textElement.attributedText
@@ -468,11 +479,11 @@ public final class RichLayoutEngine: @unchecked Sendable {
             self.width = width
         }
 
-        mutating func appendInline(_ element: RichElement, using engine: RichLayoutEngine) {
+        mutating func appendInline(_ element: RichElement, using engine: RichTextLayoutEngine) {
             inlineElements.append(element)
         }
 
-        mutating func flushInline(using engine: RichLayoutEngine) {
+        mutating func flushInline(using engine: RichTextLayoutEngine) {
             guard !inlineElements.isEmpty else { return }
             var builder = InlineBuilder()
             inlineElements.forEach { builder.append($0) }
@@ -484,7 +495,7 @@ public final class RichLayoutEngine: @unchecked Sendable {
         mutating func appendTextBlock(
             _ content: InlineContent,
             spacing: CGFloat,
-            using engine: RichLayoutEngine
+            using engine: RichTextLayoutEngine
         ) {
             guard content.text.length > 0,
                   let cached = engine.textLayout(for: content, width: width) else { return }

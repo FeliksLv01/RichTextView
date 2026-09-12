@@ -74,6 +74,8 @@ public final class RichTextBadgeElement: RichElement, RichActionElement, @unchec
     public let contentInsets: UIEdgeInsets
     public let outerInsets: UIEdgeInsets
     public let cornerRadius: CGFloat
+    public let borderColor: UIColor?
+    public let borderWidth: CGFloat
     public let baselineOffset: CGFloat
     public let actionIdentifier: String
     public let copyText: String
@@ -87,6 +89,8 @@ public final class RichTextBadgeElement: RichElement, RichActionElement, @unchec
         contentInsets: UIEdgeInsets,
         outerInsets: UIEdgeInsets = .zero,
         cornerRadius: CGFloat,
+        borderColor: UIColor? = nil,
+        borderWidth: CGFloat = 0,
         baselineOffset: CGFloat = 0,
         actionIdentifier: String,
         copyText: String? = nil,
@@ -103,10 +107,37 @@ public final class RichTextBadgeElement: RichElement, RichActionElement, @unchec
         self.contentInsets = contentInsets
         self.outerInsets = outerInsets
         self.cornerRadius = cornerRadius
+        self.borderColor = borderColor
+        self.borderWidth = max(0, borderWidth)
         self.baselineOffset = baselineOffset
         self.actionIdentifier = actionIdentifier
         self.copyText = copyText ?? text
         self.attributedText = attributedText
+        super.init(id: id, revision: revision, display: .inline)
+    }
+
+    public init(
+        id: String,
+        attributedText: NSAttributedString,
+        contentInsets: UIEdgeInsets,
+        outerInsets: UIEdgeInsets = .zero,
+        cornerRadius: CGFloat,
+        borderColor: UIColor? = nil,
+        borderWidth: CGFloat = 0,
+        baselineOffset: CGFloat = 0,
+        actionIdentifier: String = "",
+        copyText: String? = nil,
+        revision: RichElementRevision = .initial
+    ) {
+        self.contentInsets = contentInsets
+        self.outerInsets = outerInsets
+        self.cornerRadius = cornerRadius
+        self.borderColor = borderColor
+        self.borderWidth = max(0, borderWidth)
+        self.baselineOffset = baselineOffset
+        self.actionIdentifier = actionIdentifier
+        self.copyText = copyText ?? attributedText.string
+        self.attributedText = NSAttributedString(attributedString: attributedText)
         super.init(id: id, revision: revision, display: .inline)
     }
 }

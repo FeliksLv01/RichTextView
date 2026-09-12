@@ -121,6 +121,36 @@ the pasteboard, and clears the selection after the action completes.
 renderer keeps fixed image geometry while a cancellable `URLSession` request
 loads and caches HTTPS image data, then refreshes only the image display.
 
+Text nodes accept semantic or CSS-style foreground and background colors.
+Markdown inline code receives the configured `codeBackgroundColor`, while
+fenced code blocks use independent text, background, inset, and corner-radius
+tokens. Fenced code preserves source lines and scrolls horizontally when a line
+exceeds the viewport; a language header provides a direct Copy action. Hosts can
+provide cached syntax-highlighted attributed text through
+`codeBlockPresentation`. The Example uses HighlighterSwift as one replaceable
+integration; it is not a dependency of the core renderer.
+
+## Streaming updates
+
+Pass the preceding document back to the Markdown parser so stable node IDs and
+layout/display revisions survive each partial source update:
+
+```swift
+let next = parser.parse(
+    partialMarkdown,
+    documentID: messageID,
+    previousDocument: previous?.document
+)
+previous = next
+```
+
+`RichTextLayoutEngine` caches unchanged text layouts, and `RichTextView`
+cancels obsolete layout work by generation. When asynchronous drawing is
+enabled, the view keeps the preceding rendered contents visible until the next
+bitmap is ready by default. Set
+`preservesRenderedContentDuringAsyncUpdates = false` if a host prefers an empty
+intermediate state.
+
 ## Example app
 
 The [Example](Example) app uses the iOS 15 scene lifecycle and consumes this

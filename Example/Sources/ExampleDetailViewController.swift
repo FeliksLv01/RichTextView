@@ -1,4 +1,5 @@
 import RichTextView
+import SafariServices
 import UIKit
 
 final class ExampleDetailViewController: UIViewController {
@@ -8,6 +9,7 @@ final class ExampleDetailViewController: UIViewController {
     private let imageLoader = ExampleRemoteImageLoader()
     private let selectionMenuPresenter = ExampleSelectionMenuPresenter()
     private lazy var richTextView = RichTextView(imageLoader: imageLoader)
+    private var renderedWidth: CGFloat = 0
 
     init(example: ExampleCase) {
         self.example = example
@@ -25,7 +27,6 @@ final class ExampleDetailViewController: UIViewController {
         navigationItem.largeTitleDisplayMode = .never
         view.backgroundColor = .systemBackground
         configureViews()
-        example.apply(to: richTextView, constrainedWidth: 320)
     }
 
     override func viewDidLayoutSubviews() {
@@ -34,6 +35,10 @@ final class ExampleDetailViewController: UIViewController {
 
         let horizontalInset: CGFloat = 20
         let contentWidth = max(0, scrollView.bounds.width - horizontalInset * 2)
+        if contentWidth > 0, abs(contentWidth - renderedWidth) > 0.5 {
+            renderedWidth = contentWidth
+            example.apply(to: richTextView, constrainedWidth: contentWidth)
+        }
         let noteHeight = noteLabel.sizeThatFits(
             CGSize(width: contentWidth, height: .greatestFiniteMagnitude)
         ).height
@@ -55,6 +60,12 @@ final class ExampleDetailViewController: UIViewController {
         )
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
+        example.apply(to: richTextView, constrainedWidth: max(1, renderedWidth))
+    }
+
     private func configureViews() {
         scrollView.alwaysBounceVertical = true
         view.addSubview(scrollView)
@@ -67,8 +78,17 @@ final class ExampleDetailViewController: UIViewController {
         scrollView.addSubview(noteLabel)
 
         configureSelection()
+        richTextView.actionHandler = { [weak self] _, identifier in
+            self?.activate(identifier: identifier)
+        }
         richTextView.accessibilityIdentifier = "example.content"
         scrollView.addSubview(richTextView)
+    }
+
+    private func activate(identifier: String) {
+        guard identifier.hasPrefix("link:"),
+              let url = URL(string: String(identifier.dropFirst("link:".count))) else { return }
+        present(SFSafariViewController(url: url), animated: true)
     }
 
     private func configureSelection() {

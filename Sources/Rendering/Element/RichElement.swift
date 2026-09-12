@@ -34,6 +34,7 @@ public struct RichContainerInsets: Hashable, Sendable {
 }
 
 public enum RichContainerDecoration: @unchecked Sendable {
+    case background(color: UIColor, cornerRadius: CGFloat)
     case leadingRule(color: UIColor, width: CGFloat)
     case listMarker(attributedText: NSAttributedString, width: CGFloat)
     case horizontalRule(color: UIColor)

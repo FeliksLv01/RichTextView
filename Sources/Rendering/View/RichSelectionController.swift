@@ -10,7 +10,7 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
     }
 
     private weak var hostView: RichTextView?
-    private var layout: RichLayout?
+    private var layout: RichTextLayout?
     private var selectedGlobalRange: NSRange?
     private var selectedSemanticRange: RichSemanticRange?
     private var activeCursor: RichSelectionCursor?
@@ -66,7 +66,7 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
         longPressGesture
     }
 
-    func apply(layout: RichLayout) {
+    func apply(layout: RichTextLayout) {
         self.layout = layout
         guard let selectedSemanticRange,
               let rebasedRange = globalRange(for: selectedSemanticRange) else {

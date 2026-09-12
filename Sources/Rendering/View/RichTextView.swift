@@ -90,12 +90,13 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         set { renderLayer.displaysAsynchronously = newValue }
     }
     public var laysOutAsynchronously = true
+    public var preservesRenderedContentDuringAsyncUpdates = true
 
-    public private(set) var currentLayout: RichLayout?
+    public private(set) var currentLayout: RichTextLayout?
     public private(set) var currentSnapshot: RichElementSnapshot?
     public private(set) var currentSelection: RichSelection?
 
-    private let layoutEngine: RichLayoutEngine
+    private let layoutEngine: RichTextLayoutEngine
     private lazy var attachmentManager = RichAttachmentManager(hostView: self)
     private lazy var selectionController = RichSelectionController(hostView: self)
     private var layoutTask: Task<Void, Never>?
@@ -117,7 +118,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
 
     public init(
         frame: CGRect = .zero,
-        layoutEngine: RichLayoutEngine = RichLayoutEngine(),
+        layoutEngine: RichTextLayoutEngine = RichTextLayoutEngine(),
         imageLoader: RichImageLoader? = nil
     ) {
         self.layoutEngine = layoutEngine
@@ -243,7 +244,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         apply(currentSnapshot.applying(updates))
     }
 
-    public func apply(_ snapshot: RichElementSnapshot, layout: RichLayout) {
+    public func apply(_ snapshot: RichElementSnapshot, layout: RichTextLayout) {
         precondition(snapshot.root.id == layout.rootElementID, "Snapshot and layout must have the same root ID")
         simpleContent = nil
         simpleTextActions.removeAll()
@@ -253,10 +254,10 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         apply(layout)
     }
 
-    public func apply(_ layout: RichLayout) {
+    public func apply(_ layout: RichTextLayout) {
         generation &+= 1
         layoutTask?.cancel()
-        if displaysAsynchronously {
+        if displaysAsynchronously && !preservesRenderedContentDuringAsyncUpdates {
             renderLayer.clearDisplayContents()
         }
         currentLayout = layout
@@ -419,6 +420,24 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
             displayTraits.performAsCurrent {
                 guard let layout else { return }
                 for runBox in layout.runBoxes {
+                    guard let decorationRunBox = runBox as? RichDecorationRunBox,
+                          case let .background(color, cornerRadius) = decorationRunBox.decoration else { continue }
+                    let rect = CGRect(
+                        x: decorationRunBox.frame.minX,
+                        y: size.height - decorationRunBox.frame.maxY,
+                        width: decorationRunBox.frame.width,
+                        height: decorationRunBox.frame.height
+                    )
+                    context.setFillColor(color.cgColor)
+                    context.addPath(CGPath(
+                        roundedRect: rect,
+                        cornerWidth: cornerRadius,
+                        cornerHeight: cornerRadius,
+                        transform: nil
+                    ))
+                    context.fillPath()
+                }
+                for runBox in layout.runBoxes {
                     if isCancelled() { return }
                     if let textRunBox = runBox as? RichTextRunBox {
                         textRunBox.layout.draw(
@@ -450,6 +469,8 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
                         )
                     } else if let decorationRunBox = runBox as? RichDecorationRunBox {
                         switch decorationRunBox.decoration {
+                        case .background:
+                            continue
                         case let .leadingRule(color, _):
                             context.setFillColor(color.cgColor)
                             context.fill(CGRect(
@@ -811,7 +832,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         }
     }
 
-    private func updateAccessibility(using layout: RichLayout) {
+    private func updateAccessibility(using layout: RichTextLayout) {
         var elements: [UIAccessibilityElement] = []
         for runBox in layout.textRunBoxes {
             let element = UIAccessibilityElement(accessibilityContainer: self)

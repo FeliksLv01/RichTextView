@@ -9,7 +9,12 @@ public final class RichTextElementBuilder: RichContentElementBuilding {
         let explicitForegroundColor = UIColor.richContentColor(content.style.foregroundColor)
         let explicitBackgroundColor = UIColor.richContentColor(content.style.backgroundColor)
         var attributes: [NSAttributedString.Key: Any] = [
-            .font: displayFont(baseFont: context.configuration.font, style: content.style),
+            .font: displayFont(
+                baseFont: content.style.code
+                    ? context.configuration.inlineCodeFont
+                    : context.configuration.font,
+                style: content.style
+            ),
             .foregroundColor: context.configuration.textForegroundColorResolver?(
             explicitForegroundColor,
             explicitBackgroundColor,
@@ -19,10 +24,24 @@ public final class RichTextElementBuilder: RichContentElementBuilding {
             .paragraphStyle: richParagraphStyle(context.configuration)
         ]
         attributes[.backgroundColor] = explicitBackgroundColor
+            ?? (content.style.code ? context.configuration.codeBackgroundColor : nil)
         if content.style.underline { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
         if content.style.strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
         let text = NSMutableAttributedString(string: content.text, attributes: attributes)
         applyHighlights(to: text, tokens: context.configuration.highlightTokens, configuration: context.configuration)
+        if content.style.code {
+            return RichTextBadgeElement(
+                id: node.id,
+                attributedText: text,
+                contentInsets: context.configuration.inlineCodeInsets,
+                cornerRadius: context.configuration.inlineCodeCornerRadius,
+                borderColor: context.configuration.inlineCodeBorderColor,
+                borderWidth: context.configuration.inlineCodeBorderWidth,
+                baselineOffset: context.configuration.inlineCodeBaselineOffset,
+                actionIdentifier: "",
+                revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
+            )
+        }
         return RichTextElement(
             id: node.id,
             attributedText: text,
@@ -34,7 +53,10 @@ public final class RichTextElementBuilder: RichContentElementBuilding {
         let pointSize = baseFont.pointSize * CGFloat(style.fontScale)
         let font: UIFont
         if style.code {
-            font = UIFont.monospacedSystemFont(ofSize: pointSize, weight: style.bold ? .semibold : .regular)
+            let codeFont = baseFont.withSize(pointSize)
+            font = style.bold
+                ? UIFont.systemFont(ofSize: codeFont.pointSize, weight: .semibold)
+                : codeFont
         } else if style.bold {
             font = UIFont.systemFont(ofSize: pointSize, weight: .bold)
         } else {
@@ -127,6 +149,15 @@ private extension UIColor {
 
     private static func richContentNamedColor(_ value: String) -> UIColor? {
         switch value.lowercased() {
+        case "label": UIColor.label
+        case "secondarylabel": UIColor.secondaryLabel
+        case "systemblue": UIColor.systemBlue
+        case "systemgreen": UIColor.systemGreen
+        case "systemorange": UIColor.systemOrange
+        case "systemred": UIColor.systemRed
+        case "systemyellow": UIColor.systemYellow
+        case "secondarysystemfill": UIColor.secondarySystemFill
+        case "secondarysystembackground": UIColor.secondarySystemBackground
         case "black": UIColor(red: 0, green: 0, blue: 0, alpha: 1)
         case "white": UIColor(red: 1, green: 1, blue: 1, alpha: 1)
         case "red": UIColor(red: 1, green: 0, blue: 0, alpha: 1)

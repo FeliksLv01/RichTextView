@@ -1,22 +1,22 @@
 @preconcurrency import CoreText
 import UIKit
 
-public final class RichCoreTextLayout: @unchecked Sendable {
-    public struct LineFragment: Sendable {
-        public let line: CTLine
-        public let range: NSRange
-        public let frame: CGRect
+final class RichCoreTextLayout: @unchecked Sendable {
+    struct LineFragment: Sendable {
+        let line: CTLine
+        let range: NSRange
+        let frame: CGRect
         let coreTextOrigin: CGPoint
         let stringIndexOffset: Int
     }
 
-    public let attributedText: NSAttributedString
-    public let framesetter: CTFramesetter
-    public let frame: CTFrame
-    public let size: CGSize
-    public let lines: [LineFragment]
+    let attributedText: NSAttributedString
+    let framesetter: CTFramesetter
+    let frame: CTFrame
+    let size: CGSize
+    let lines: [LineFragment]
 
-    public init?(
+    init?(
         attributedText: NSAttributedString,
         constrainedWidth: CGFloat,
         maximumNumberOfLines: Int = 0,
@@ -132,7 +132,7 @@ public final class RichCoreTextLayout: @unchecked Sendable {
         size = CGSize(width: min(safeWidth, ceil(measuredWidth)), height: visibleHeight)
     }
 
-    public func draw(
+    func draw(
         in context: CGContext,
         canvasHeight: CGFloat,
         origin: CGPoint,
@@ -155,7 +155,7 @@ public final class RichCoreTextLayout: @unchecked Sendable {
         context.restoreGState()
     }
 
-    public func characterRange(at point: CGPoint) -> NSRange? {
+    func characterRange(at point: CGPoint) -> NSRange? {
         guard let position = closestPosition(to: point) else { return nil }
         let string = attributedText.string as NSString
         guard string.length > 0 else { return nil }
@@ -179,7 +179,7 @@ public final class RichCoreTextLayout: @unchecked Sendable {
         return NSRange(location: lower, length: max(1, upper - lower))
     }
 
-    public func closestPosition(to point: CGPoint) -> Int? {
+    func closestPosition(to point: CGPoint) -> Int? {
         guard let line = closestLine(to: point) else { return nil }
         let relative = CGPoint(x: max(0, point.x - line.frame.minX), y: 0)
         let index = CTLineGetStringIndexForPosition(line.line, relative)
@@ -188,13 +188,13 @@ public final class RichCoreTextLayout: @unchecked Sendable {
         return min(NSMaxRange(line.range), max(line.range.location, sourceIndex))
     }
 
-    public func lineRange(at point: CGPoint) -> NSRange? {
+    func lineRange(at point: CGPoint) -> NSRange? {
         closestLine(to: point)?.range
     }
 
     /// ICU 按词切分（与系统文本选择一致，中文为词粒度而非标点间整句）；
     /// 点位不在任何词上时回落到该处的 composed character。
-    public func wordRange(at point: CGPoint) -> NSRange? {
+    func wordRange(at point: CGPoint) -> NSRange? {
         guard let line = closestLine(to: point),
               let position = closestPosition(to: point) else { return nil }
         let string = attributedText.string as NSString
@@ -216,7 +216,7 @@ public final class RichCoreTextLayout: @unchecked Sendable {
         return match ?? string.rangeOfComposedCharacterSequence(at: index)
     }
 
-    public func selectionRects(for range: NSRange) -> [CGRect] {
+    func selectionRects(for range: NSRange) -> [CGRect] {
         lines.compactMap { line in
             let intersection = NSIntersectionRange(range, line.range)
             guard intersection.length > 0 else { return nil }
@@ -412,6 +412,17 @@ public final class RichCoreTextLayout: @unchecked Sendable {
                     transform: nil
                 ))
                 context.fillPath()
+                if let borderColor = badge.borderColor, badge.borderWidth > 0 {
+                    context.setStrokeColor(borderColor.cgColor)
+                    context.setLineWidth(badge.borderWidth)
+                    context.addPath(CGPath(
+                        roundedRect: badgeRect.insetBy(dx: badge.borderWidth / 2, dy: badge.borderWidth / 2),
+                        cornerWidth: min(badge.cornerRadius, badgeRect.height / 2),
+                        cornerHeight: min(badge.cornerRadius, badgeRect.height / 2),
+                        transform: nil
+                    ))
+                    context.strokePath()
+                }
                 context.textPosition = CGPoint(
                     x: badgeRect.minX + badge.contentInsets.left,
                     y: badgeRect.minY + badge.contentInsets.bottom + badge.textDescent

@@ -98,6 +98,7 @@ open class RichRenderObject: @unchecked Sendable {
             hasher.combine(badge.outerInsets.bottom)
             hasher.combine(badge.outerInsets.right)
             hasher.combine(badge.cornerRadius)
+            hasher.combine(badge.borderWidth)
             hasher.combine(badge.baselineOffset)
             hasher.combine(badge.actionIdentifier)
         case let text as RichTextElement:
@@ -130,6 +131,7 @@ open class RichRenderObject: @unchecked Sendable {
         switch element {
         case let badge as RichTextBadgeElement:
             hasher.combine(badge.attributedText.richViewFingerprint)
+            hasher.combine(badge.borderColor?.hash ?? 0)
         case let text as RichTextElement: hasher.combine(text.attributedText.richViewFingerprint)
         case let image as RichImageElement:
             hasher.combine(image.source.identifier)

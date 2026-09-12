@@ -24,7 +24,7 @@ Pod::Spec.new do |s|
 
     core.test_spec 'Tests' do |tests|
       tests.source_files = 'Tests/RichTextViewTests/RichElementSnapshotTests.swift',
-                           'Tests/RichTextViewTests/RichLayoutEngineTests.swift',
+                           'Tests/RichTextViewTests/RichTextLayoutEngineTests.swift',
                            'Tests/RichTextViewTests/RichTextViewUsageTests.swift'
     end
   end

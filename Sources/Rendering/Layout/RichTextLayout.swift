@@ -10,7 +10,7 @@ public struct RichLineBox: Sendable {
     }
 }
 
-public final class RichLayout: Sendable {
+public final class RichTextLayout: Sendable {
     public let rootElementID: String
     public let constrainedSize: CGSize
     public let contentSize: CGSize

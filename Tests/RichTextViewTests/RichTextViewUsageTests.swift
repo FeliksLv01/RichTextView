@@ -14,6 +14,12 @@ final class RichTextViewUsageTests: XCTestCase {
         XCTAssertGreaterThan(view.currentLayout?.contentSize.height ?? 0, 0)
     }
 
+    func testAsyncUpdatesPreserveRenderedContentByDefault() {
+        let view = makeView()
+
+        XCTAssertTrue(view.preservesRenderedContentDuringAsyncUpdates)
+    }
+
     func testAttributedStringEntryPointPreservesContentAndProducesLayout() {
         let source = NSAttributedString(
             string: "Attributed text",
@@ -95,6 +101,41 @@ final class RichTextViewUsageTests: XCTestCase {
         XCTAssertEqual(paragraph.children.count, 3)
         XCTAssertTrue(paragraph.children[1] is RichImageElement)
         XCTAssertTrue(result.unhandledNodeTypes.isEmpty)
+    }
+
+    func testTextNodeSupportsSemanticForegroundAndBackgroundColors() throws {
+        let document = RichContentDocument(
+            root: RichContentNode(
+                id: "root",
+                type: .root,
+                children: [RichContentNode(
+                    id: "text",
+                    type: .text,
+                    content: RichTextContent(
+                        text: "Styled",
+                        style: RichTextStyle(
+                            foregroundColor: "systemOrange",
+                            backgroundColor: "secondarySystemFill"
+                        )
+                    )
+                )]
+            )
+        )
+        let result = RichContentRenderer().render(
+            document: document,
+            constrainedWidth: 320,
+            configuration: .standard
+        )
+        let text = try XCTUnwrap(result.snapshot.root.children.first as? RichTextElement)
+
+        XCTAssertEqual(
+            text.attributedText.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor,
+            UIColor.systemOrange
+        )
+        XCTAssertEqual(
+            text.attributedText.attribute(.backgroundColor, at: 0, effectiveRange: nil) as? UIColor,
+            UIColor.secondarySystemFill
+        )
     }
 
     private func makeView() -> RichTextView {

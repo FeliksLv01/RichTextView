@@ -39,8 +39,8 @@ Markdown ── RichMarkdownParser ────────┼── RichContent
 Other formats ── custom parser ───────┘
     ↓ RichContentRenderer
 RichElementSnapshot
-    ↓ RichLayoutEngine
-RichLayout
+    ↓ RichTextLayoutEngine
+RichTextLayout
     ↓ RichTextView
 CALayer drawing + hosted attachment views
 ```
@@ -81,12 +81,20 @@ that binary.
 
 `RichContentRenderer` resolves semantic values into rendering elements using an
 injected configuration and builder registry. The immutable
-`RichElementSnapshot` feeds `RichLayoutEngine`, which produces all text,
+`RichElementSnapshot` feeds `RichTextLayoutEngine`, which produces all text,
 decoration, image, and attachment geometry before views are created.
 
 Text is measured and drawn with CoreText. Stable element IDs and separate
 layout/display revisions allow unchanged render objects and cached text layouts
 to be reused across updates.
+
+For streaming input, callers feed the preceding document into the next parser
+pass. Reconciliation preserves node lineage and increments only affected
+revisions; the layout cache then reuses unchanged attributed runs. The view
+guards asynchronous layouts and display jobs with generations so stale work
+cannot publish over newer content, and retains the previous bitmap while a new
+asynchronous display is pending. Message lifecycle, stream-part merging, and
+typewriter pacing remain application concerns.
 
 ## Attachments and images
 

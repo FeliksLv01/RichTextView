@@ -2,7 +2,7 @@ import UIKit
 import XCTest
 @testable import RichTextView
 
-final class RichLayoutEngineTests: XCTestCase {
+final class RichTextLayoutEngineTests: XCTestCase {
     func testImageAspectFitPreservesSourceRatioInsideContentInsets() {
         let fitted = RichImageDrawing.fittedRect(
             imageSize: CGSize(width: 200, height: 100),
@@ -40,7 +40,7 @@ final class RichLayoutEngineTests: XCTestCase {
     }
 
     func testLayoutEngineDoesNotRetainSnapshotTree() {
-        let engine = RichLayoutEngine()
+        let engine = RichTextLayoutEngine()
         weak var rootReference: RichContainerElement?
 
         autoreleasepool {
@@ -83,11 +83,11 @@ final class RichLayoutEngineTests: XCTestCase {
             cornerRadius: 11,
             actionIdentifier: "mention:contact-id"
         )
-        let layout = RichLayoutEngine().layout(
+        let layout = RichTextLayoutEngine().layout(
             snapshot: RichElementSnapshot(root: RichContainerElement(id: "root", children: [badge])),
             constrainedTo: CGSize(width: 200, height: CGFloat.greatestFiniteMagnitude)
         )
-        let layoutWithoutOuterSpacing = RichLayoutEngine().layout(
+        let layoutWithoutOuterSpacing = RichTextLayoutEngine().layout(
             snapshot: RichElementSnapshot(root: RichContainerElement(
                 id: "root-without-spacing",
                 children: [badgeWithoutOuterSpacing]
@@ -141,7 +141,7 @@ final class RichLayoutEngineTests: XCTestCase {
             children: [badge, joiner, marker],
             display: .inline
         )
-        let groupLayout = RichLayoutEngine().layout(
+        let groupLayout = RichTextLayoutEngine().layout(
             snapshot: RichElementSnapshot(root: group),
             constrainedTo: CGSize(width: 200, height: CGFloat.greatestFiniteMagnitude)
         )
@@ -153,7 +153,7 @@ final class RichLayoutEngineTests: XCTestCase {
                 group,
             ]
         )
-        let layout = RichLayoutEngine().layout(
+        let layout = RichTextLayoutEngine().layout(
             snapshot: RichElementSnapshot(root: root),
             constrainedTo: CGSize(width: constrainedWidth, height: CGFloat.greatestFiniteMagnitude)
         )
@@ -195,7 +195,7 @@ final class RichLayoutEngineTests: XCTestCase {
             spacing: 5
         ))
 
-        let layout = RichLayoutEngine().layout(
+        let layout = RichTextLayoutEngine().layout(
             snapshot: snapshot,
             constrainedTo: CGSize(width: 200, height: CGFloat.greatestFiniteMagnitude)
         )
@@ -209,7 +209,7 @@ final class RichLayoutEngineTests: XCTestCase {
     }
 
     func testDisplayOnlyRevisionKeepsGeometry() {
-        let engine = RichLayoutEngine()
+        let engine = RichTextLayoutEngine()
         let first = snapshot(displayRevision: 0)
         let second = snapshot(displayRevision: 1)
 
@@ -227,7 +227,7 @@ final class RichLayoutEngineTests: XCTestCase {
     }
 
     func testTextCacheDoesNotReuseLayoutAcrossDifferentAttributes() throws {
-        let engine = RichLayoutEngine()
+        let engine = RichTextLayoutEngine()
         let normalText = NSAttributedString(
             string: "search result",
             attributes: [
@@ -275,7 +275,7 @@ final class RichLayoutEngineTests: XCTestCase {
             isSelectable: true
         )
         let last = RichTextElement(id: "last", attributedText: NSAttributedString(string: "B"))
-        let layout = RichLayoutEngine().layout(
+        let layout = RichTextLayoutEngine().layout(
             snapshot: RichElementSnapshot(root: RichContainerElement(
                 id: "root",
                 children: [first, attachment, last]

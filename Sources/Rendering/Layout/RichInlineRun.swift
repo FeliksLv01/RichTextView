@@ -38,6 +38,8 @@ final class RichInlineTextBadge: Sendable {
     let contentInsets: UIEdgeInsets
     let outerInsets: UIEdgeInsets
     let cornerRadius: CGFloat
+    let borderColor: UIColor?
+    let borderWidth: CGFloat
     let size: CGSize
     let textDescent: CGFloat
     let ascent: CGFloat
@@ -48,6 +50,8 @@ final class RichInlineTextBadge: Sendable {
         contentInsets: UIEdgeInsets,
         outerInsets: UIEdgeInsets,
         cornerRadius: CGFloat,
+        borderColor: UIColor? = nil,
+        borderWidth: CGFloat = 0,
         baselineOffset: CGFloat
     ) {
         let mutableText = NSMutableAttributedString(attributedString: attributedText)
@@ -59,6 +63,8 @@ final class RichInlineTextBadge: Sendable {
         self.contentInsets = contentInsets
         self.outerInsets = outerInsets
         self.cornerRadius = max(0, cornerRadius)
+        self.borderColor = borderColor
+        self.borderWidth = max(0, borderWidth)
         line = CTLineCreateWithAttributedString(mutableText)
         var ascent: CGFloat = 0
         var descent: CGFloat = 0
@@ -207,6 +213,8 @@ enum RichInlineRunFactory {
         contentInsets: UIEdgeInsets,
         outerInsets: UIEdgeInsets,
         cornerRadius: CGFloat,
+        borderColor: UIColor? = nil,
+        borderWidth: CGFloat = 0,
         baselineOffset: CGFloat
     ) -> NSAttributedString {
         let badge = RichInlineTextBadge(
@@ -214,6 +222,8 @@ enum RichInlineRunFactory {
             contentInsets: contentInsets,
             outerInsets: outerInsets,
             cornerRadius: cornerRadius,
+            borderColor: borderColor,
+            borderWidth: borderWidth,
             baselineOffset: baselineOffset
         )
         var callbacks = CTRunDelegateCallbacks(

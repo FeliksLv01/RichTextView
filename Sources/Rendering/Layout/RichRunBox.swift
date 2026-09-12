@@ -34,11 +34,11 @@ public struct RichTextSegment: Sendable {
 
 public final class RichTextRunBox: RichRunBox, @unchecked Sendable {
     public let text: NSAttributedString
-    public let layout: RichCoreTextLayout
+    let layout: RichCoreTextLayout
     public let segments: [RichTextSegment]
     public let globalRange: NSRange
 
-    public init(
+    init(
         id: String,
         frame: CGRect,
         text: NSAttributedString,
@@ -94,9 +94,9 @@ public final class RichAttachmentRunBox: RichRunBox, @unchecked Sendable {
 
 public final class RichDecorationRunBox: RichRunBox, @unchecked Sendable {
     public let decoration: RichContainerDecoration
-    public let textLayout: RichCoreTextLayout?
+    let textLayout: RichCoreTextLayout?
 
-    public init(
+    init(
         id: String,
         frame: CGRect,
         decoration: RichContainerDecoration,
