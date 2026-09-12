@@ -8,7 +8,8 @@ packages:
   RichTextView:
     path: ..
   RichTextViewTreeSitter:
-    path: ../../RichTextViewTreeSitter
+    url: https://github.com/FeliksLv01/RichTextViewTreeSitter.git
+    branch: main
 
 targets:
   RichTextViewExample:
