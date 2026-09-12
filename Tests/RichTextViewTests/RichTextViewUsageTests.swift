@@ -36,36 +36,33 @@ final class RichTextViewUsageTests: XCTestCase {
 
     func testDocumentEntryPointRendersThroughUnifiedNodeTree() {
         let document = RichContentDocument(
-            root: RichContentNode(
-                id: "root",
-                type: .root,
-                children: [
-                    RichContentNode(
-                        id: "paragraph",
-                        type: .paragraph,
-                        children: [
-                            RichContentNode(
-                                id: "text",
-                                type: .text,
-                                content: RichTextContent(text: "Node tree")
-                            )
-                        ]
-                    )
-                ]
-            )
-        )
-        let result = RichContentRenderer().render(
-            document: document,
-            constrainedWidth: 320,
-            configuration: .standard
+            id: "root",
+            children: [.paragraph(id: "paragraph", text: "Node tree")]
         )
         let view = makeView()
 
-        view.apply(result.snapshot)
+        view.setContent(document)
 
-        XCTAssertTrue(result.unhandledNodeTypes.isEmpty)
         XCTAssertEqual(view.currentSnapshot?.root.id, "root")
         XCTAssertGreaterThan(view.currentLayout?.contentSize.height ?? 0, 0)
+    }
+
+    func testDocumentEntryPointDefersRenderingUntilWidthIsAvailable() {
+        let view = RichTextView()
+        view.laysOutAsynchronously = false
+
+        view.setContent(RichContentDocument(
+            id: "root",
+            children: [.paragraph(id: "paragraph", text: "Deferred node tree")]
+        ))
+
+        XCTAssertNil(view.currentSnapshot)
+
+        view.frame.size = CGSize(width: 240, height: 1_000)
+        view.layoutIfNeeded()
+
+        XCTAssertEqual(view.currentSnapshot?.root.id, "root")
+        XCTAssertEqual(view.currentLayout?.constrainedSize.width, 240)
     }
 
     func testDocumentSupportsInlineImageBetweenTextNodes() throws {
@@ -82,7 +79,11 @@ final class RichTextViewUsageTests: XCTestCase {
                             RichContentNode(
                                 id: "image",
                                 type: .image,
-                                content: RichImageContent(source: "example://image", title: "Image")
+                                content: RichImageContent(
+                                    source: "example://image",
+                                    title: "Image",
+                                    size: CGSize(width: 24, height: 20)
+                                )
                             ),
                             RichContentNode(id: "after", type: .text, content: RichTextContent(text: " after"))
                         ]
@@ -99,8 +100,54 @@ final class RichTextViewUsageTests: XCTestCase {
         let paragraph = try XCTUnwrap(result.snapshot.root.children.first as? RichContainerElement)
 
         XCTAssertEqual(paragraph.children.count, 3)
-        XCTAssertTrue(paragraph.children[1] is RichImageElement)
+        let image = try XCTUnwrap(paragraph.children.dropFirst().first as? RichImageElement)
+        XCTAssertEqual(image.size, CGSize(width: 24, height: 20))
         XCTAssertTrue(result.unhandledNodeTypes.isEmpty)
+    }
+
+    func testImageNodeCanBeInsertedAfterAsyncSizeResolution() async throws {
+        let view = makeView()
+        let initialDocument = RichContentDocument(
+            id: "async-image-document",
+            children: [.paragraph(
+                id: "paragraph",
+                children: [
+                    .text(id: "before", "Before "),
+                    .text(id: "after", "after")
+                ]
+            )]
+        )
+        view.setContent(initialDocument, resolver: TestImageResolver())
+
+        XCTAssertFalse(containsImage(in: try XCTUnwrap(view.currentSnapshot?.root)))
+
+        let updatedDocument = await Task.detached {
+            RichContentDocument(
+                id: "async-image-document",
+                children: [.paragraph(
+                    id: "paragraph",
+                    children: [
+                        .text(id: "before", "Before "),
+                        RichContentNode(
+                            id: "loaded-image",
+                            type: .image,
+                            content: RichImageContent(
+                                source: "example://loaded-image",
+                                title: "Loaded image",
+                                size: CGSize(width: 80, height: 45)
+                            )
+                        ),
+                        .text(id: "after", "after")
+                    ]
+                )]
+            )
+        }.value
+        view.setContent(updatedDocument, resolver: TestImageResolver())
+
+        let root = try XCTUnwrap(view.currentSnapshot?.root)
+        let image = try XCTUnwrap(flatten(root).compactMap { $0 as? RichImageElement }.first)
+        XCTAssertEqual(image.id, "loaded-image")
+        XCTAssertEqual(image.size, CGSize(width: 80, height: 45))
     }
 
     func testTextNodeSupportsSemanticForegroundAndBackgroundColors() throws {
@@ -165,17 +212,20 @@ final class RichTextViewUsageTests: XCTestCase {
         return view
     }
 
+    private func containsImage(in element: RichElement) -> Bool {
+        flatten(element).contains { $0 is RichImageElement }
+    }
+
+    private func flatten(_ element: RichElement) -> [RichElement] {
+        [element] + element.children.flatMap(flatten)
+    }
+
     private final class TestImageResolver: RichContentPresentationResolving {
-        func imagePresentation(
+        func imageSource(
             for node: RichContentNode,
             content: RichImageContent
-        ) -> RichInlineImagePresentation? {
-            RichInlineImagePresentation(
-                source: RichImageSource(identifier: content.source, image: UIImage(systemName: "photo")),
-                size: CGSize(width: 24, height: 20),
-                copyText: content.title,
-                accessibilityLabel: content.title
-            )
+        ) -> RichImageSource? {
+            RichImageSource(identifier: content.source, image: UIImage(systemName: "photo"))
         }
     }
 

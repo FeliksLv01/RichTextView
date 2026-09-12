@@ -21,7 +21,7 @@ Pod::Spec.new do |s|
 
   s.subspec 'Core' do |core|
     core.source_files = 'Sources/Core/**/*.swift', 'Sources/Rendering/**/*.swift'
-    core.dependency 'RichTextViewTreeSitterBinary', '0.25.10.1'
+    core.dependency 'RichTextViewTreeSitterBinary', '0.25.10.2'
 
     core.test_spec 'Tests' do |tests|
       tests.source_files = 'Tests/RichTextViewTests/RichElementSnapshotTests.swift',

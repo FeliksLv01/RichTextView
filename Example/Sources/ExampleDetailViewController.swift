@@ -2,7 +2,7 @@ import RichTextView
 import SafariServices
 import UIKit
 
-final class ExampleDetailViewController: UIViewController {
+final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate {
     private let example: ExampleCase
     private let scrollView = UIScrollView()
     private let noteLabel = UILabel()
@@ -10,7 +10,13 @@ final class ExampleDetailViewController: UIViewController {
     private let selectionMenuPresenter = ExampleSelectionMenuPresenter()
     private let contentResolver = ExampleContentResolver()
     private lazy var richTextView = RichTextView(imageLoader: imageLoader)
+    private lazy var markdownTypewriter = ExampleMarkdownTypewriter { [weak self] update in
+        self?.applyTypewriterUpdate(update)
+    }
     private var renderedWidth: CGFloat = 0
+    private var followsStreamingContent = true
+    private var needsStreamingScrollToBottom = false
+    private var streamingDocument: RichContentDocument?
 
     init(example: ExampleCase) {
         self.example = example
@@ -28,6 +34,25 @@ final class ExampleDetailViewController: UIViewController {
         navigationItem.largeTitleDisplayMode = .never
         view.backgroundColor = .systemBackground
         configureViews()
+        if example == .markdownStreaming {
+            navigationItem.rightBarButtonItem = UIBarButtonItem(
+                barButtonSystemItem: .refresh,
+                target: self,
+                action: #selector(restartTypewriter)
+            )
+        }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if example == .markdownStreaming {
+            markdownTypewriter.start()
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        markdownTypewriter.stop()
     }
 
     override func viewDidLayoutSubviews() {
@@ -38,11 +63,20 @@ final class ExampleDetailViewController: UIViewController {
         let contentWidth = max(0, scrollView.bounds.width - horizontalInset * 2)
         if contentWidth > 0, abs(contentWidth - renderedWidth) > 0.5 {
             renderedWidth = contentWidth
-            example.apply(
-                to: richTextView,
-                constrainedWidth: contentWidth,
-                resolver: contentResolver
-            )
+            if example == .markdownStreaming, let streamingDocument {
+                example.apply(
+                    document: streamingDocument,
+                    to: richTextView,
+                    constrainedWidth: contentWidth,
+                    resolver: contentResolver
+                )
+            } else {
+                example.apply(
+                    to: richTextView,
+                    constrainedWidth: contentWidth,
+                    resolver: contentResolver
+                )
+            }
         }
         let noteHeight = noteLabel.sizeThatFits(
             CGSize(width: contentWidth, height: .greatestFiniteMagnitude)
@@ -63,6 +97,10 @@ final class ExampleDetailViewController: UIViewController {
             width: scrollView.bounds.width,
             height: richTextView.frame.maxY + 40
         )
+        if needsStreamingScrollToBottom {
+            needsStreamingScrollToBottom = false
+            scrollToBottom()
+        }
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -77,6 +115,7 @@ final class ExampleDetailViewController: UIViewController {
 
     private func configureViews() {
         scrollView.alwaysBounceVertical = true
+        scrollView.delegate = self
         view.addSubview(scrollView)
 
         noteLabel.font = .preferredFont(forTextStyle: .subheadline)
@@ -113,5 +152,72 @@ final class ExampleDetailViewController: UIViewController {
             }]
         }
         richTextView.isTextSelectionEnabled = true
+    }
+
+    @objc private func restartTypewriter() {
+        followsStreamingContent = true
+        needsStreamingScrollToBottom = false
+        streamingDocument = nil
+        scrollView.setContentOffset(
+            CGPoint(x: 0, y: -scrollView.adjustedContentInset.top),
+            animated: false
+        )
+        markdownTypewriter.start()
+    }
+
+    private func applyTypewriterUpdate(_ update: ExampleMarkdownTypewriter.Update) {
+        streamingDocument = update.document
+        example.apply(
+            document: update.document,
+            to: richTextView,
+            constrainedWidth: max(1, renderedWidth),
+            resolver: contentResolver
+        )
+        let progress = update.isComplete
+            ? "Complete · \(update.totalUnitCount) semantic units"
+            : "Typing · \(update.visibleUnitCount)/\(update.totalUnitCount) received semantic units"
+        noteLabel.text = "\(example.note)\n\n\(progress)"
+        needsStreamingScrollToBottom = followsStreamingContent
+        view.setNeedsLayout()
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard example == .markdownStreaming else { return }
+        followsStreamingContent = false
+        needsStreamingScrollToBottom = false
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard example == .markdownStreaming,
+              scrollView.isTracking || scrollView.isDecelerating else { return }
+        followsStreamingContent = isNearBottom
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard example == .markdownStreaming, !decelerate else { return }
+        followsStreamingContent = isNearBottom
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard example == .markdownStreaming else { return }
+        followsStreamingContent = isNearBottom
+    }
+
+    private var isNearBottom: Bool {
+        let visibleBottom = scrollView.contentOffset.y
+            + scrollView.bounds.height
+            - scrollView.adjustedContentInset.bottom
+        return scrollView.contentSize.height - visibleBottom <= 72
+    }
+
+    private func scrollToBottom() {
+        let minimumOffset = -scrollView.adjustedContentInset.top
+        let maximumOffset = scrollView.contentSize.height
+            - scrollView.bounds.height
+            + scrollView.adjustedContentInset.bottom
+        scrollView.setContentOffset(
+            CGPoint(x: 0, y: max(minimumOffset, maximumOffset)),
+            animated: false
+        )
     }
 }

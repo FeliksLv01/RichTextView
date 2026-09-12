@@ -17,18 +17,18 @@ let package = Package(
         ),
         .binaryTarget(
             name: "TreeSitter",
-            url: "https://github.com/FeliksLv01/RichTextViewTreeSitter/releases/download/tree-sitter-0.25.10.1/TreeSitter.xcframework.zip",
-            checksum: "f2ba9ddb46cf03ea12d769f7299023f73f2e93f84631217e054736bbdc8d9300"
+            url: "https://github.com/FeliksLv01/RichTextViewTreeSitter/releases/download/tree-sitter-0.25.10.2/TreeSitter.xcframework.zip",
+            checksum: "5fac4aff46f9f37a9a6b84f013a0f10f1262a10707a61c08d3a847197cb44fbf"
         ),
         .binaryTarget(
             name: "SwiftTreeSitter",
-            url: "https://github.com/FeliksLv01/RichTextViewTreeSitter/releases/download/tree-sitter-0.25.10.1/SwiftTreeSitter.xcframework.zip",
-            checksum: "89b8df51b14494290bf71de048d5a1da4a65e6736a264244d19075500383b9c6"
+            url: "https://github.com/FeliksLv01/RichTextViewTreeSitter/releases/download/tree-sitter-0.25.10.2/SwiftTreeSitter.xcframework.zip",
+            checksum: "9654d1151b6f6da90186bfd1ceab146f0b1e779294226602da1741d2a7750653"
         ),
         .binaryTarget(
             name: "TreeSitterSwift",
-            url: "https://github.com/FeliksLv01/RichTextViewTreeSitter/releases/download/tree-sitter-0.25.10.1/TreeSitterSwift.xcframework.zip",
-            checksum: "f85c2df73fd8365a9d28063363d74630fa2495cd39afa591f5641438793c1260"
+            url: "https://github.com/FeliksLv01/RichTextViewTreeSitter/releases/download/tree-sitter-0.25.10.2/TreeSitterSwift.xcframework.zip",
+            checksum: "5f49f40984a4258c10ffd24eb401cee5bd18ee048ce63a3b2e1a94d8b20fffe8"
         ),
         .target(
             name: "RichTextView",

@@ -118,7 +118,7 @@ final class RichCoreTextLayout: @unchecked Sendable {
                     x: raw.origin.x,
                     y: y,
                     width: ceil(min(safeWidth, width)),
-                    height: ceil(ascent + descent + leading)
+                    height: ascent + descent + leading
                 ),
                 coreTextOrigin: CGPoint(
                     x: raw.origin.x,

@@ -67,12 +67,62 @@ public struct RichContentDocument: Sendable {
         self.root = root
     }
 
+    public init(
+        id: String,
+        children: [RichContentNode],
+        revision: RichContentRevision = .initial
+    ) {
+        root = RichContentNode(
+            id: id,
+            type: .root,
+            children: children,
+            revision: revision
+        )
+    }
+
     public var plainText: String {
         root.plainText
     }
 }
 
 public extension RichContentNode {
+    static func text(
+        id: String,
+        _ text: String,
+        style: RichTextStyle = RichTextStyle(),
+        revision: RichContentRevision = .initial
+    ) -> Self {
+        Self(
+            id: id,
+            type: .text,
+            content: RichTextContent(text: text, style: style),
+            revision: revision
+        )
+    }
+
+    static func paragraph(
+        id: String,
+        children: [RichContentNode],
+        revision: RichContentRevision = .initial
+    ) -> Self {
+        Self(id: id, type: .paragraph, children: children, revision: revision)
+    }
+
+    static func paragraph(
+        id: String,
+        text: String,
+        style: RichTextStyle = RichTextStyle(),
+        revision: RichContentRevision = .initial
+    ) -> Self {
+        paragraph(
+            id: id,
+            children: [
+                .text(id: "\(id).text", text, style: style, revision: revision)
+            ],
+            revision: revision
+        )
+    }
+
     var plainText: String {
         if let text = content(as: RichTextContent.self) {
             return text.text

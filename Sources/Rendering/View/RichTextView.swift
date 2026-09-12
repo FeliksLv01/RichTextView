@@ -12,6 +12,12 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         case attributedText(NSAttributedString)
     }
 
+    private struct DocumentContent {
+        let document: RichContentDocument
+        let configuration: RichContentRenderingConfiguration
+        let resolver: (any RichContentPresentationResolving)?
+    }
+
     public override class var layerClass: AnyClass { RichRenderLayer.self }
 
     public var text: String? {
@@ -25,6 +31,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         set {
             simpleTextActions.removeAll()
             simpleTextActionHandlers.removeAll()
+            documentContent = nil
             simpleContent = newValue.map(SimpleContent.text)
             updateSimpleContent()
         }
@@ -41,6 +48,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         set {
             simpleTextActions.removeAll()
             simpleTextActionHandlers.removeAll()
+            documentContent = nil
             simpleContent = newValue.map {
                 SimpleContent.attributedText(NSAttributedString(attributedString: $0))
             }
@@ -102,6 +110,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
     private var layoutTask: Task<Void, Never>?
     private var generation: UInt = 0
     private var simpleContent: SimpleContent?
+    private var documentContent: DocumentContent?
     private var simpleTextActions: [SimpleTextAction] = []
     private var simpleTextActionHandlers: [String: (RichTextView) -> Void] = [:]
     private var lastLayoutWidth: CGFloat = 0
@@ -137,11 +146,29 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
     }
 
     public func apply(_ snapshot: RichElementSnapshot) {
+        documentContent = nil
         simpleContent = nil
         simpleTextActions.removeAll()
         simpleTextActionHandlers.removeAll()
         usesPrecomputedLayout = false
         scheduleLayout(for: snapshot)
+    }
+
+    public func setContent(
+        _ document: RichContentDocument,
+        configuration: RichContentRenderingConfiguration = .standard,
+        resolver: (any RichContentPresentationResolving)? = nil
+    ) {
+        simpleContent = nil
+        simpleTextActions.removeAll()
+        simpleTextActionHandlers.removeAll()
+        usesPrecomputedLayout = false
+        documentContent = DocumentContent(
+            document: document,
+            configuration: configuration,
+            resolver: resolver
+        )
+        updateDocumentContent()
     }
 
     public func setTextAction(_ actionIdentifier: String, range: NSRange) {
@@ -246,6 +273,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
 
     public func apply(_ snapshot: RichElementSnapshot, layout: RichTextLayout) {
         precondition(snapshot.root.id == layout.rootElementID, "Snapshot and layout must have the same root ID")
+        documentContent = nil
         simpleContent = nil
         simpleTextActions.removeAll()
         simpleTextActionHandlers.removeAll()
@@ -277,6 +305,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         layoutTask = nil
         currentSnapshot = nil
         currentLayout = nil
+        documentContent = nil
         simpleContent = nil
         simpleTextActions.removeAll()
         simpleTextActionHandlers.removeAll()
@@ -310,11 +339,12 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
     }
 
     public override func sizeThatFits(_ size: CGSize) -> CGSize {
-        guard let snapshot = simpleContent.map(makeSimpleSnapshot) ?? currentSnapshot else {
-            return .zero
-        }
         let width = min(100_000, max(0, size.width))
         guard width > 0 else { return .zero }
+        let snapshot = simpleContent.map(makeSimpleSnapshot)
+            ?? documentContent.map { makeDocumentSnapshot($0, constrainedWidth: width) }
+            ?? currentSnapshot
+        guard let snapshot else { return .zero }
         return layoutEngine.layout(
             snapshot: snapshot,
             constrainedTo: CGSize(width: width, height: size.height)
@@ -328,6 +358,8 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
               abs(bounds.width - lastLayoutWidth) > 0.5 else { return }
         if simpleContent != nil {
             updateSimpleContent()
+        } else if documentContent != nil {
+            updateDocumentContent()
         } else if let currentSnapshot {
             scheduleLayout(for: currentSnapshot)
         }
@@ -644,6 +676,35 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
             constrainedTo: CGSize(width: bounds.width, height: .greatestFiniteMagnitude)
         )
         apply(layout)
+    }
+
+    private func updateDocumentContent() {
+        layoutTask?.cancel()
+        usesPrecomputedLayout = false
+        guard let documentContent else { return }
+        guard bounds.width > 0 else {
+            currentSnapshot = nil
+            currentLayout = nil
+            lastLayoutWidth = 0
+            attachmentManager.prepareForReuse()
+            selectionController.clearSelection()
+            renderLayer.clearDisplayContents()
+            invalidateIntrinsicContentSize()
+            return
+        }
+        scheduleLayout(for: makeDocumentSnapshot(documentContent, constrainedWidth: bounds.width))
+    }
+
+    private func makeDocumentSnapshot(
+        _ content: DocumentContent,
+        constrainedWidth: CGFloat
+    ) -> RichElementSnapshot {
+        RichContentRenderer().render(
+            document: content.document,
+            constrainedWidth: constrainedWidth,
+            configuration: content.configuration,
+            resolver: content.resolver
+        ).snapshot
     }
 
     private func makeSimpleSnapshot(_ content: SimpleContent) -> RichElementSnapshot {

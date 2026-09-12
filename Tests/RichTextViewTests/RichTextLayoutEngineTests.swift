@@ -327,6 +327,55 @@ final class RichTextLayoutEngineTests: XCTestCase {
         XCTAssertFalse(rects.isEmpty)
     }
 
+    func testMinimumLineHeightDoesNotClipLargerHeadingFont() throws {
+        let font = UIFont.boldSystemFont(ofSize: 28)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = 17
+        let text = NSAttributedString(
+            string: "Streaming answer",
+            attributes: [.font: font, .paragraphStyle: paragraph]
+        )
+
+        let layout = try XCTUnwrap(RichCoreTextLayout(attributedText: text, constrainedWidth: 320))
+        let line = try XCTUnwrap(layout.lines.first)
+
+        XCTAssertGreaterThanOrEqual(line.frame.height, font.ascender - font.descender)
+        XCTAssertGreaterThanOrEqual(layout.size.height, line.frame.maxY)
+    }
+
+    func testTallInlineImageExpandsItsLineWithoutOverlappingPreviousLine() throws {
+        let font = UIFont.systemFont(ofSize: 17)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = font.lineHeight
+        let text = NSMutableAttributedString(
+            string: "inline code followed by image ",
+            attributes: [.font: font, .paragraphStyle: paragraph]
+        )
+        let imageLocation = text.length
+        text.append(RichInlineRunFactory.image(
+            identifier: "large-inline-image",
+            image: nil,
+            size: CGSize(width: 64, height: 28),
+            contentInsets: .zero,
+            font: font,
+            contentMode: .scaleAspectFit,
+            tintColor: nil
+        ))
+
+        let layout = try XCTUnwrap(RichCoreTextLayout(attributedText: text, constrainedWidth: 190))
+        let imageFrame = try XCTUnwrap(layout.inlineRunRect(at: imageLocation))
+        let imageLine = try XCTUnwrap(layout.lines.first {
+            NSLocationInRange(imageLocation, $0.range)
+        })
+
+        XCTAssertGreaterThanOrEqual(imageLine.frame.height, 28)
+        XCTAssertGreaterThanOrEqual(imageFrame.minY, imageLine.frame.minY)
+        XCTAssertLessThanOrEqual(imageFrame.maxY, imageLine.frame.maxY + 0.5)
+        for pair in zip(layout.lines, layout.lines.dropFirst()) {
+            XCTAssertLessThanOrEqual(pair.0.frame.maxY, pair.1.frame.minY + 0.5)
+        }
+    }
+
     func testCoreTextLayoutLimitsLinesAndTruncatesLastVisibleLine() throws {
         let text = NSAttributedString(
             string: "one two three four five six seven eight nine ten",

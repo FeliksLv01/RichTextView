@@ -7,7 +7,7 @@ import UIKit
 
 final class RichMarkdownParserTests: XCTestCase {
     func testStrikethroughRequiresDoubleTilde() {
-        let result = RichMarkdownParser().parse("~single~ and ~~double~~", documentID: "document")
+        let result = makeParser().parse("~single~ and ~~double~~", documentID: "document")
         let textNodes = flatten(result.document.root).compactMap { $0.content(as: RichTextContent.self) }
 
         XCTAssertTrue(textNodes.contains { $0.text.contains("~single~") && !$0.style.strikethrough })
@@ -16,7 +16,7 @@ final class RichMarkdownParserTests: XCTestCase {
 
     @MainActor
     func testMarkdownTableUsesBuiltInScrollableAttachment() throws {
-        let parsed = RichMarkdownParser().parse(
+        let parsed = makeParser().parse(
             """
             | Name | Description | Status |
             | :--- | :---------- | -----: |
@@ -51,7 +51,7 @@ final class RichMarkdownParserTests: XCTestCase {
     }
 
     func testMarkdownTablePreservesAlignmentAndStableIdentityAcrossStreamingAppend() throws {
-        let parser = RichMarkdownParser()
+        let parser = makeParser()
         let initial = parser.parse(
             "| Left | Right |\n| :--- | ---: |\n| A | 1 |",
             documentID: "stream-table"
@@ -71,9 +71,49 @@ final class RichMarkdownParserTests: XCTestCase {
         XCTAssertEqual(cells.dropFirst().first?.content(as: RichTableCellContent.self)?.alignment, .right)
     }
 
+    func testTableAfterBlockQuoteRemainsASeparateNode() {
+        let parsed = makeParser().parse(
+            """
+            > A streamed quote.
+
+            | Layer | Result |
+            | :--- | ---: |
+            | Parser | Stable IDs |
+            """,
+            documentID: "quote-followed-by-table"
+        )
+        let nodes = flatten(parsed.document.root)
+
+        XCTAssertEqual(nodes.filter { $0.type == .blockQuote }.count, 1)
+        XCTAssertEqual(nodes.filter { $0.type == .table }.count, 1)
+    }
+
+    @MainActor
+    func testRightAlignedTableCellUsesTextWidthInsteadOfAlignmentOffset() throws {
+        let parsed = makeParser().parse(
+            "| Layer | Result |\n| :--- | ---: |\n| Parser | Stable IDs |",
+            documentID: "right-aligned-table"
+        )
+        let rendered = RichContentRenderer().render(
+            document: parsed.document,
+            constrainedWidth: 320,
+            configuration: .standard
+        )
+        let attachment = try XCTUnwrap(flattenElements(rendered.snapshot.root).compactMap {
+            $0 as? RichAttachmentElement
+        }.first { $0.reuseIdentifier == RichTableViewProvider.reuseIdentifier })
+        let provider = try XCTUnwrap(attachment.provider as? RichTableViewProvider)
+        let model = provider.model
+        let lastEdge = try XCTUnwrap(model.columnEdges.last)
+        let rightColumnWidth = lastEdge - model.columnEdges[1]
+
+        XCTAssertLessThan(rightColumnWidth, model.style.maximumColumnWidth)
+        XCTAssertLessThan(rightColumnWidth, 140)
+    }
+
     @MainActor
     func testInlineCodeAndFencedCodeUseDistinctPresentations() throws {
-        let parsed = RichMarkdownParser().parse(
+        let parsed = makeParser().parse(
             "Use `inlineCode` here.\n\n```swift\nlet value = 42\n```",
             documentID: "code"
         )
@@ -114,7 +154,7 @@ final class RichMarkdownParserTests: XCTestCase {
 
     @MainActor
     func testMarkdownEntryPointRendersThroughUnifiedNodeTree() {
-        let parsed = RichMarkdownParser().parse(
+        let parsed = makeParser(imageSize: CGSize(width: 24, height: 20)).parse(
             "# Title\n\nText before ![Image](example://image) and after.",
             documentID: "markdown"
         )
@@ -167,6 +207,21 @@ final class RichMarkdownParserTests: XCTestCase {
         ))
     }
 
+    func testBuiltInCodeBlockHighlightingReusesLanguageAcrossStreamingNodeStates() throws {
+        RichCodeBlockHighlighting.useBuiltIn(theme: .github, maximumCachedCodeBlocks: 8)
+        defer { RichCodeBlockHighlighting.unregister() }
+
+        for index in 0..<40 {
+            let source = String("let streamingValue = \(index)".prefix(index % 24 + 1))
+            let presentation = try XCTUnwrap(RichCodeBlockHighlighting.presentation(
+                for: source,
+                language: "swift",
+                nodeID: "streaming-code-\(index)"
+            ))
+            XCTAssertEqual(presentation.attributedCode.string, source)
+        }
+    }
+
     @MainActor
     func testExplicitResolverPrecedesRegisteredCodeBlockHighlightingPlugin() {
         let plugin = TestCodePlugin(color: .systemGreen)
@@ -181,7 +236,7 @@ final class RichMarkdownParserTests: XCTestCase {
     private func renderCodeBlock(
         resolver: (any RichContentPresentationResolving)?
     ) {
-        let parsed = RichMarkdownParser().parse(
+        let parsed = makeParser().parse(
             "```swift\nlet value = 42\n```",
             documentID: "plugin-code"
         )
@@ -191,6 +246,12 @@ final class RichMarkdownParserTests: XCTestCase {
             configuration: .standard,
             resolver: resolver
         )
+    }
+
+    private func makeParser(
+        imageSize: CGSize = CGSize(width: 24, height: 24)
+    ) -> RichMarkdownParser {
+        RichMarkdownParser(imageSize: imageSize)
     }
 
     private func containsImage(_ element: RichElement) -> Bool {
@@ -203,16 +264,11 @@ final class RichMarkdownParserTests: XCTestCase {
     }
 
     private final class TestImageResolver: RichContentPresentationResolving {
-        func imagePresentation(
+        func imageSource(
             for node: RichContentNode,
             content: RichImageContent
-        ) -> RichInlineImagePresentation? {
-            RichInlineImagePresentation(
-                source: RichImageSource(identifier: content.source, image: UIImage(systemName: "photo")),
-                size: CGSize(width: 24, height: 20),
-                copyText: content.title,
-                accessibilityLabel: content.title
-            )
+        ) -> RichImageSource? {
+            RichImageSource(identifier: content.source, image: UIImage(systemName: "photo"))
         }
     }
 

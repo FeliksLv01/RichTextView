@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 public struct RichTextStyle: Hashable, Sendable {
@@ -162,13 +163,16 @@ public struct RichUnknownContent: RichContentNodeContent, RichContentNodeContent
 public struct RichImageContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
     public let source: String
     public let title: String
+    public let size: CGSize
 
-    public init(source: String, title: String = "") {
+    public init(source: String, title: String = "", size: CGSize) {
+        precondition(size.width > 0 && size.height > 0, "Image node size must be positive")
         self.source = source
         self.title = title
+        self.size = size
     }
 
-    public var richContentLayoutSignature: String { title }
+    public var richContentLayoutSignature: String { "\(title)|\(size.width)|\(size.height)" }
     public var richContentDisplaySignature: String { "\(source)|\(title)" }
 }
 

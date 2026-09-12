@@ -11,7 +11,7 @@ public final class RichImageElementBuilder: RichContentElementBuilding {
         context: RichContentRenderContext
     ) -> RichElement? {
         guard let content = node.content(as: RichImageContent.self) else { return nil }
-        guard let image = context.resolver?.imagePresentation(for: node, content: content) else {
+        guard let source = context.resolver?.imageSource(for: node, content: content) else {
             let fallback = content.title.isEmpty ? content.source : content.title
             return RichTextElement(
                 id: node.id,
@@ -28,12 +28,11 @@ public final class RichImageElementBuilder: RichContentElementBuilding {
         }
         return RichImageElement(
             id: node.id,
-            source: image.source,
-            size: image.size,
-            contentInsets: image.contentInsets,
+            source: source,
+            size: content.size,
             font: context.configuration.font,
-            copyText: image.copyText ?? content.title,
-            accessibilityLabel: image.accessibilityLabel ?? content.title
+            copyText: content.title,
+            accessibilityLabel: content.title
         )
     }
 }

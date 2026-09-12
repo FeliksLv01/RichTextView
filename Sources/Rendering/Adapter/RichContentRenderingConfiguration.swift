@@ -126,7 +126,7 @@ public protocol RichContentPresentationResolving: AnyObject {
     func overrideElement(for node: RichContentNode, context: RichContentRenderContext) -> RichElement?
     func mentionPresentation(for node: RichContentNode, content: RichMentionContent) -> RichMentionPresentation?
     func emojiPresentation(for node: RichContentNode, content: RichEmojiContent) -> RichInlineImagePresentation?
-    func imagePresentation(for node: RichContentNode, content: RichImageContent) -> RichInlineImagePresentation?
+    func imageSource(for node: RichContentNode, content: RichImageContent) -> RichImageSource?
     func codeBlockPresentation(
         for node: RichContentNode,
         content: RichCodeBlockContent,
@@ -141,7 +141,7 @@ public extension RichContentPresentationResolving {
     func overrideElement(for node: RichContentNode, context: RichContentRenderContext) -> RichElement? { nil }
     func mentionPresentation(for node: RichContentNode, content: RichMentionContent) -> RichMentionPresentation? { nil }
     func emojiPresentation(for node: RichContentNode, content: RichEmojiContent) -> RichInlineImagePresentation? { nil }
-    func imagePresentation(for node: RichContentNode, content: RichImageContent) -> RichInlineImagePresentation? { nil }
+    func imageSource(for node: RichContentNode, content: RichImageContent) -> RichImageSource? { nil }
     func codeBlockPresentation(
         for node: RichContentNode,
         content: RichCodeBlockContent,

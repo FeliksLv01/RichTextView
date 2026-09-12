@@ -4,7 +4,7 @@ RichTextView uses binary distributions of Tree-sitter, SwiftTreeSitter, and
 tree-sitter-swift. `RichSwiftHighlightQuery.swift` is derived from the
 tree-sitter-swift highlight query. Version pins and complete license texts are
 published with the corresponding
-[binary release](https://github.com/FeliksLv01/RichTextViewTreeSitter/releases/tag/tree-sitter-0.25.10.1).
+[binary release](https://github.com/FeliksLv01/RichTextViewTreeSitter/releases/tag/tree-sitter-0.25.10.2).
 
 ## tree-sitter
 

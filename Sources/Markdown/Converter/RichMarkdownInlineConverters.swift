@@ -1,3 +1,4 @@
+import CoreGraphics
 import Markdown
 #if SWIFT_PACKAGE
 import RichTextView
@@ -28,7 +29,12 @@ public final class RichMarkdownLinkConverter: RichMarkdownNodeConverting {
 
 public final class RichMarkdownImageConverter: RichMarkdownNodeConverting {
     public let markupType: Any.Type = Image.self
-    public init() {}
+    private let imageSize: CGSize
+
+    public init(imageSize: CGSize) {
+        precondition(imageSize.width > 0 && imageSize.height > 0, "Markdown image size must be positive")
+        self.imageSize = imageSize
+    }
 
     public func convert(
         _ markup: any Markup,
@@ -40,7 +46,11 @@ public final class RichMarkdownImageConverter: RichMarkdownNodeConverting {
         return [RichContentNode(
             id: context.nodeID,
             type: .image,
-            content: RichImageContent(source: image.source ?? "", title: image.title ?? title)
+            content: RichImageContent(
+                source: image.source ?? "",
+                title: image.title ?? title,
+                size: imageSize
+            )
         )]
     }
 }

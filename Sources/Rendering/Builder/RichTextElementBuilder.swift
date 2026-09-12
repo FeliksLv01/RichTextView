@@ -8,13 +8,14 @@ public final class RichTextElementBuilder: RichContentElementBuilding {
         guard let content = node.content(as: RichTextContent.self) else { return nil }
         let explicitForegroundColor = UIColor.richContentColor(content.style.foregroundColor)
         let explicitBackgroundColor = UIColor.richContentColor(content.style.backgroundColor)
+        let font = displayFont(
+            baseFont: content.style.code
+                ? context.configuration.inlineCodeFont
+                : context.configuration.font,
+            style: content.style
+        )
         var attributes: [NSAttributedString.Key: Any] = [
-            .font: displayFont(
-                baseFont: content.style.code
-                    ? context.configuration.inlineCodeFont
-                    : context.configuration.font,
-                style: content.style
-            ),
+            .font: font,
             .foregroundColor: context.configuration.textForegroundColorResolver?(
             explicitForegroundColor,
             explicitBackgroundColor,
@@ -94,7 +95,6 @@ public final class RichTextElementBuilder: RichContentElementBuilding {
 func richParagraphStyle(_ configuration: RichContentRenderingConfiguration) -> NSParagraphStyle {
     let style = NSMutableParagraphStyle()
     style.minimumLineHeight = configuration.lineHeight
-    style.maximumLineHeight = configuration.lineHeight
     return style
 }
 

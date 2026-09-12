@@ -40,9 +40,9 @@ enum RichTableLayoutBuilder {
 
         for (row, isHeader) in rows {
             let cells = row.cells.enumerated().map { index, cell in
-                let snapshot = snapshot(for: cell)
+                let alignedSnapshot = snapshot(for: cell)
                 let intrinsicLayout = layoutEngine.layout(
-                    snapshot: snapshot,
+                    snapshot: snapshot(for: cell, appliesAlignment: false),
                     constrainedTo: CGSize(width: maximumContentWidth, height: .greatestFiniteMagnitude)
                 )
                 let width = min(
@@ -53,7 +53,7 @@ enum RichTableLayoutBuilder {
                     )
                 )
                 columnWidths[index] = max(columnWidths[index], width)
-                return PreparedCell(id: cell.id, snapshot: snapshot)
+                return PreparedCell(id: cell.id, snapshot: alignedSnapshot)
             }
             preparedRows.append((cells, isHeader))
         }
@@ -129,8 +129,11 @@ enum RichTableLayoutBuilder {
         let snapshot: RichElementSnapshot
     }
 
-    private static func snapshot(for cell: RichTableCellElement) -> RichElementSnapshot {
-        let children = cell.alignment == .natural
+    private static func snapshot(
+        for cell: RichTableCellElement,
+        appliesAlignment: Bool = true
+    ) -> RichElementSnapshot {
+        let children = !appliesAlignment || cell.alignment == .natural
             ? cell.children
             : cell.children.map { applying(cell.alignment, to: $0) }
         return RichElementSnapshot(root: RichContainerElement(
@@ -224,7 +227,7 @@ enum RichTableLayoutBuilder {
 
 final class RichTableViewProvider: RichAttachmentViewProvider, @unchecked Sendable {
     static let reuseIdentifier = "RichTextView.Table"
-    private let model: RichTableLayoutModel
+    let model: RichTableLayoutModel
 
     init(model: RichTableLayoutModel) {
         self.model = model

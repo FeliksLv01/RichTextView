@@ -67,34 +67,18 @@ consumers do not compile or clone Tree-sitter source code.
 ## Render a node tree
 
 ```swift
-let document = RichContentDocument(
-    root: RichContentNode(
-        id: "article",
-        type: .root,
-        children: [
-            RichContentNode(
-                id: "paragraph-1",
-                type: .paragraph,
-                children: [
-                    RichContentNode(
-                        id: "text-1",
-                        type: .text,
-                        content: RichTextContent(text: "A unified rich-text tree")
-                    )
-                ]
-            )
-        ]
-    )
-)
-let rendered = RichContentRenderer().render(
-    document: document,
-    constrainedWidth: 320,
-    configuration: .standard
-)
-
 let view = RichTextView()
-view.apply(rendered.snapshot)
+view.setContent(RichContentDocument(
+    id: "article",
+    children: [
+        .paragraph(id: "paragraph-1", text: "A unified rich-text tree")
+    ]
+))
 ```
+
+`RichTextView` renders at its current width and rerenders automatically when
+that width changes. Keep node IDs stable between updates so streaming content
+can reuse unchanged nodes.
 
 For simple labels, `RichTextView` also accepts `String` and
 `NSAttributedString` directly.
@@ -104,16 +88,18 @@ For simple labels, `RichTextView` also accepts `String` and
 Markdown is normalized into the same node tree before rendering:
 
 ```swift
-let parsed = RichMarkdownParser().parse(markdown, documentID: "article")
-let rendered = RichContentRenderer().render(
-    document: parsed.document,
-    constrainedWidth: 320,
-    configuration: .standard
+let parsed = RichMarkdownParser(imageSize: CGSize(width: 64, height: 40)).parse(
+    markdown,
+    documentID: "article"
 )
-
 let view = RichTextView()
-view.apply(rendered.snapshot)
+view.setContent(parsed.document)
 ```
+
+For background preparation, custom element-builder registries, or precomputed
+layouts shared across views, use the lower-level `RichContentRenderer`,
+`RichTextLayoutEngine`, and `apply` APIs described in
+[Architecture](Documentation/Architecture.md).
 
 See [Architecture](Documentation/Architecture.md) for extension points,
 threading, attachments, images, interaction, and selection.

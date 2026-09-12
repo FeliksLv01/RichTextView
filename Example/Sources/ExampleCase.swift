@@ -8,6 +8,7 @@ enum ExampleCase: CaseIterable {
     case nodeTree
     case table
     case markdownSelection
+    case markdownStreaming
 
     var title: String {
         switch self {
@@ -16,6 +17,7 @@ enum ExampleCase: CaseIterable {
         case .nodeTree: "Complex unified node tree"
         case .table: "Scrollable rich table"
         case .markdownSelection: "Markdown with selection"
+        case .markdownStreaming: "Streaming Markdown typewriter"
         }
     }
 
@@ -26,6 +28,7 @@ enum ExampleCase: CaseIterable {
         case .nodeTree: "Heading, mention, link, image, quote, list, and emoji"
         case .table: "Rich cells, column alignment, selection, and horizontal scrolling"
         case .markdownSelection: "Rich Markdown normalized into selectable nodes"
+        case .markdownStreaming: "Incremental parsing, reconciliation, and flicker-free updates"
         }
     }
 
@@ -41,11 +44,13 @@ enum ExampleCase: CaseIterable {
             "The table is a built-in rich-text node. Swipe horizontally to inspect every column; selecting it copies tab-separated rows."
         case .markdownSelection:
             "Text selection is enabled. Long-press, adjust the handles if needed, then use the anchored Copy menu."
+        case .markdownStreaming:
+            "Incoming Markdown arrives in chunks while the typewriter advances every 30 ms, matching REDoc's native default. Stable nodes and the previous bitmap remain visible across updates."
         }
     }
 
     var supportsSelection: Bool {
-        self == .attributedImageMix || self == .nodeTree || self == .table || self == .markdownSelection
+        self != .string
     }
 
     @MainActor
@@ -67,7 +72,10 @@ enum ExampleCase: CaseIterable {
                 resolver: resolver
             )
         case .table:
-            let parsed = RichMarkdownParser().parse(Self.tableMarkdown, documentID: "table-example")
+            let parsed = RichMarkdownParser(imageSize: CGSize(width: 24, height: 24)).parse(
+                Self.tableMarkdown,
+                documentID: "table-example"
+            )
             apply(
                 document: parsed.document,
                 to: richTextView,
@@ -75,11 +83,20 @@ enum ExampleCase: CaseIterable {
                 resolver: resolver
             )
         case .markdownSelection:
-            let parsed = RichMarkdownParser().parse(Self.markdown, documentID: "markdown-example")
+            let parsed = RichMarkdownParser(imageSize: CGSize(width: 64, height: 28)).parse(
+                Self.markdown,
+                documentID: "markdown-example"
+            )
             apply(
                 document: parsed.document,
                 to: richTextView,
                 constrainedWidth: constrainedWidth,
+                resolver: resolver
+            )
+        case .markdownStreaming:
+            richTextView.setContent(
+                RichContentDocument(id: "streaming-example", children: []),
+                configuration: Self.renderingConfiguration,
                 resolver: resolver
             )
         }
@@ -127,19 +144,17 @@ enum ExampleCase: CaseIterable {
     }
 
     @MainActor
-    private func apply(
+    func apply(
         document: RichContentDocument,
         to richTextView: RichTextView,
         constrainedWidth: CGFloat,
         resolver: any RichContentPresentationResolving
     ) {
-        let result = RichContentRenderer().render(
-            document: document,
-            constrainedWidth: constrainedWidth,
+        richTextView.setContent(
+            document,
             configuration: Self.renderingConfiguration,
             resolver: resolver
         )
-        richTextView.apply(result.snapshot)
     }
 
     @MainActor
@@ -206,7 +221,11 @@ enum ExampleCase: CaseIterable {
                         RichContentNode(
                             id: "inline-image",
                             type: .image,
-                            content: RichImageContent(source: Self.remoteImageURL, title: "Remote GitHub image")
+                            content: RichImageContent(
+                                source: Self.remoteImageURL,
+                                title: "Remote GitHub image",
+                                size: CGSize(width: 64, height: 28)
+                            )
                         ),
                         RichContentNode(id: "emoji-prefix", type: .text, content: RichTextContent(text: " and reusable nodes ")),
                         RichContentNode(id: "emoji", type: .emoji, content: RichEmojiContent(code: ":sparkles:", name: "✨"))
@@ -351,20 +370,15 @@ enum ExampleCase: CaseIterable {
 }
 
 final class ExampleContentResolver: RichContentPresentationResolving {
-    func imagePresentation(
+    func imageSource(
         for node: RichContentNode,
         content: RichImageContent
-    ) -> RichInlineImagePresentation? {
+    ) -> RichImageSource? {
         let placeholder = UIImage(systemName: "photo.fill")?.withTintColor(.systemBlue, renderingMode: .alwaysOriginal)
-        return RichInlineImagePresentation(
-            source: RichImageSource(
-                identifier: content.source,
-                image: placeholder,
-                loadsRemotely: content.source.hasPrefix("https://")
-            ),
-            size: CGSize(width: 64, height: 28),
-            copyText: content.title.isEmpty ? "[Image]" : "[\(content.title)]",
-            accessibilityLabel: content.title.isEmpty ? "Image" : content.title
+        return RichImageSource(
+            identifier: content.source,
+            image: placeholder,
+            loadsRemotely: content.source.hasPrefix("https://")
         )
     }
 

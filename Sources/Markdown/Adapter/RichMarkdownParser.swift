@@ -1,3 +1,4 @@
+import CoreGraphics
 import Markdown
 #if SWIFT_PACKAGE
 import RichTextView
@@ -19,7 +20,11 @@ public struct RichMarkdownParser {
     private let registry: RichMarkdownNodeConverterRegistry
     private let revealProjector = RichContentDocumentRevealProjector()
 
-    public init(registry: RichMarkdownNodeConverterRegistry = .standard()) {
+    public init(imageSize: CGSize) {
+        registry = .standard(imageSize: imageSize)
+    }
+
+    public init(registry: RichMarkdownNodeConverterRegistry) {
         self.registry = registry
     }
 

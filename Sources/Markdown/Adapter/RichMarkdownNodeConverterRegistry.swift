@@ -1,3 +1,4 @@
+import CoreGraphics
 import Markdown
 #if SWIFT_PACKAGE
 import RichTextView
@@ -37,7 +38,8 @@ public struct RichMarkdownNodeConverterRegistry {
 
 public extension RichMarkdownNodeConverterRegistry {
     static func standard(
-        htmlResolver: (any RichMarkdownHTMLResolving)? = nil
+        htmlResolver: (any RichMarkdownHTMLResolving)? = nil,
+        imageSize: CGSize
     ) -> RichMarkdownNodeConverterRegistry {
         RichMarkdownNodeConverterRegistry(converters: [
             RichMarkdownDocumentConverter(),
@@ -51,7 +53,7 @@ public extension RichMarkdownNodeConverterRegistry {
             RichMarkdownSoftBreakConverter(),
             RichMarkdownLineBreakConverter(),
             RichMarkdownLinkConverter(),
-            RichMarkdownImageConverter(),
+            RichMarkdownImageConverter(imageSize: imageSize),
             RichMarkdownOrderedListConverter(),
             RichMarkdownUnorderedListConverter(),
             RichMarkdownListItemConverter(),

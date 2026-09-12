@@ -11,8 +11,7 @@ final class RichSyntaxHighlighter: @unchecked Sendable {
         var previousTree: MutableTree?
         var lastAccess: UInt64 = 0
 
-        init() throws {
-            let language = Language(language: tree_sitter_swift())
+        init(language: Language) throws {
             let parser = Parser()
             try parser.setLanguage(language)
             self.parser = parser
@@ -21,11 +20,13 @@ final class RichSyntaxHighlighter: @unchecked Sendable {
     }
 
     private let queue = DispatchQueue(label: "io.github.felikslv01.rich-text-view.syntax-highlighter")
+    private let language: Language
     private let maximumCachedCodeBlocks: Int
     private var states: [String: State] = [:]
     private var accessCounter: UInt64 = 0
 
     init(maximumCachedCodeBlocks: Int) {
+        language = Language(tree_sitter_swift())
         self.maximumCachedCodeBlocks = max(1, maximumCachedCodeBlocks)
     }
 
@@ -54,7 +55,7 @@ final class RichSyntaxHighlighter: @unchecked Sendable {
             state.lastAccess = accessCounter
             return state
         }
-        guard let state = try? State() else { return nil }
+        guard let state = try? State(language: language) else { return nil }
         state.lastAccess = accessCounter
         states[nodeID] = state
         if states.count > maximumCachedCodeBlocks,

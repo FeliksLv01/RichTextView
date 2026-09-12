@@ -11,11 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install build tools
-        run: brew install xcbeautify xcodegen
+        run: brew install xcbeautify
       - name: Build with Swift Package Manager
         run: ./Scripts/test-swiftpm.sh
-      - name: Build example app
-        run: ./Scripts/test-example.sh
 
   cocoapods:
     runs-on: macos-26
@@ -33,7 +31,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/FeliksLv01/RichTextViewTreeSitter.git ../RichTextViewTreeSitter
           curl --fail --location --output /tmp/RichTextViewTreeSitter.xcframeworks.zip \
-            https://github.com/FeliksLv01/RichTextViewTreeSitter/releases/download/tree-sitter-0.25.10.1/RichTextViewTreeSitter.xcframeworks.zip
+            https://github.com/FeliksLv01/RichTextViewTreeSitter/releases/download/tree-sitter-0.25.10.2/RichTextViewTreeSitter.xcframeworks.zip
           ditto -x -k /tmp/RichTextViewTreeSitter.xcframeworks.zip ../RichTextViewTreeSitter
       - name: Validate with CocoaPods
         run: ./Scripts/test-cocoapods.sh
