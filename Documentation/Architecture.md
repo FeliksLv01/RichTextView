@@ -46,7 +46,11 @@ CALayer drawing + hosted attachment views
 ```
 
 The renderer only consumes the unified node tree. Applications may construct it
-directly or add adapters for any source format.
+directly or add adapters for any source format. Node types are open-ended:
+applications define `RichContentNodeType(rawValue:)` values and register a
+`RichContentElementBuilding` implementation with
+`RichContentElementBuilderRegistry`. Built-in builders can also be replaced by
+node type when a product needs different presentation.
 
 ## Core model
 
@@ -87,6 +91,13 @@ decoration, image, and attachment geometry before views are created.
 Text is measured and drawn with CoreText. Stable element IDs and separate
 layout/display revisions allow unchanged render objects and cached text layouts
 to be reused across updates.
+
+Tables are built-in block attachments with a horizontal `UIScrollView`. Each
+cell is rendered from its child elements by the same CoreText pipeline; column
+widths are clamped, row heights expand to their richest cell, and the table
+attachment keeps stable identity across streaming updates. Table colors,
+padding, borders, column bounds, and row height are supplied by
+`RichTableStyle`.
 
 For streaming input, callers feed the preceding document into the next parser
 pass. Reconciliation preserves node lineage and increments only affected

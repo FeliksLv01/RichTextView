@@ -29,6 +29,39 @@ public struct RichContentResolvedLink: Sendable {
     }
 }
 
+public struct RichTableStyle: @unchecked Sendable {
+    public let cellInsets: UIEdgeInsets
+    public let minimumColumnWidth: CGFloat
+    public let maximumColumnWidth: CGFloat
+    public let minimumRowHeight: CGFloat
+    public let borderColor: UIColor
+    public let borderWidth: CGFloat
+    public let cornerRadius: CGFloat
+    public let headerBackgroundColor: UIColor
+
+    public init(
+        cellInsets: UIEdgeInsets = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8),
+        minimumColumnWidth: CGFloat = 64,
+        maximumColumnWidth: CGFloat = 280,
+        minimumRowHeight: CGFloat = 36,
+        borderColor: UIColor = .separator,
+        borderWidth: CGFloat = 1,
+        cornerRadius: CGFloat = 4,
+        headerBackgroundColor: UIColor = .tertiarySystemFill
+    ) {
+        self.cellInsets = cellInsets
+        self.minimumColumnWidth = max(1, minimumColumnWidth)
+        self.maximumColumnWidth = max(self.minimumColumnWidth, maximumColumnWidth)
+        self.minimumRowHeight = max(1, minimumRowHeight)
+        self.borderColor = borderColor
+        self.borderWidth = max(0, borderWidth)
+        self.cornerRadius = max(0, cornerRadius)
+        self.headerBackgroundColor = headerBackgroundColor
+    }
+
+    public static let standard = RichTableStyle()
+}
+
 public struct RichMentionPresentation {
     public let displayText: String
     public let isHighlighted: Bool
@@ -141,6 +174,7 @@ public struct RichContentRenderingConfiguration {
     public let codeBlockBackgroundColor: UIColor
     public let codeBlockInsets: RichContainerInsets
     public let codeBlockCornerRadius: CGFloat
+    public let tableStyle: RichTableStyle
     public let dividerColor: UIColor
     public let dividerHeight: CGFloat
     public let dividerExtent: CGFloat
@@ -197,6 +231,7 @@ public struct RichContentRenderingConfiguration {
         codeBlockBackgroundColor: UIColor? = nil,
         codeBlockInsets: RichContainerInsets = RichContainerInsets(top: 12, left: 16, bottom: 12, right: 16),
         codeBlockCornerRadius: CGFloat = 8,
+        tableStyle: RichTableStyle = .standard,
         highlightTextColor: UIColor,
         highlightBackgroundColor: UIColor,
         highlightedMentionIDs: Set<String> = [],
@@ -232,6 +267,7 @@ public struct RichContentRenderingConfiguration {
         self.codeBlockBackgroundColor = codeBlockBackgroundColor ?? codeBackgroundColor
         self.codeBlockInsets = codeBlockInsets
         self.codeBlockCornerRadius = max(0, codeBlockCornerRadius)
+        self.tableStyle = tableStyle
         self.dividerColor = dividerColor ?? blockQuoteColor
         self.dividerHeight = dividerHeight
         self.dividerExtent = dividerExtent

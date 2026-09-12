@@ -6,6 +6,7 @@ enum ExampleCase: CaseIterable {
     case string
     case attributedImageMix
     case nodeTree
+    case table
     case markdownSelection
 
     var title: String {
@@ -13,6 +14,7 @@ enum ExampleCase: CaseIterable {
         case .string: "String and actions"
         case .attributedImageMix: "Attributed image and text"
         case .nodeTree: "Complex unified node tree"
+        case .table: "Scrollable rich table"
         case .markdownSelection: "Markdown with selection"
         }
     }
@@ -22,6 +24,7 @@ enum ExampleCase: CaseIterable {
         case .string: "Multiline text, truncation, and tappable ranges"
         case .attributedImageMix: "Styled runs and inline images in NSAttributedString"
         case .nodeTree: "Heading, mention, link, image, quote, list, and emoji"
+        case .table: "Rich cells, column alignment, selection, and horizontal scrolling"
         case .markdownSelection: "Rich Markdown normalized into selectable nodes"
         }
     }
@@ -34,13 +37,15 @@ enum ExampleCase: CaseIterable {
             "Inline images participate in line breaking, baseline alignment, selection, and copy semantics."
         case .nodeTree:
             "Application data is represented by stable node IDs and rendered without going through Markdown."
+        case .table:
+            "The table is a built-in rich-text node. Swipe horizontally to inspect every column; selecting it copies tab-separated rows."
         case .markdownSelection:
             "Text selection is enabled. Long-press, adjust the handles if needed, then use the anchored Copy menu."
         }
     }
 
     var supportsSelection: Bool {
-        self == .attributedImageMix || self == .nodeTree || self == .markdownSelection
+        self == .attributedImageMix || self == .nodeTree || self == .table || self == .markdownSelection
     }
 
     @MainActor
@@ -57,6 +62,14 @@ enum ExampleCase: CaseIterable {
         case .nodeTree:
             apply(
                 document: Self.nodeTreeDocument,
+                to: richTextView,
+                constrainedWidth: constrainedWidth,
+                resolver: resolver
+            )
+        case .table:
+            let parsed = RichMarkdownParser().parse(Self.tableMarkdown, documentID: "table-example")
+            apply(
+                document: parsed.document,
                 to: richTextView,
                 constrainedWidth: constrainedWidth,
                 resolver: resolver
@@ -283,11 +296,32 @@ enum ExampleCase: CaseIterable {
     - Unordered item
     - Another item with `code`
 
+    | Component | Responsibility | Streaming behavior |
+    | :-- | :-- | --: |
+    | Node tree | Stable semantic content | Reconciled by node ID |
+    | Table | Nested rich cell content | Rows update without replacing the outer attachment |
+    | Code block | Tree-sitter highlighting | Incremental syntax tree reuse |
+
     ```swift
     let view = RichTextView()
     view.isTextSelectionEnabled = true
     let renderer = RichContentRenderer().render(document: document, constrainedWidth: 320, configuration: .standard)
     ```
+    """
+
+    private static let tableMarkdown = """
+    # Rich table
+
+    Table cells use the same rendering pipeline as the surrounding document.
+
+    | Component | Rendering | Streaming behavior | Status |
+    | :-- | :-- | :-- | --: |
+    | **Node tree** | Stable semantic content with `inline code` | Reconciles by node ID | Ready |
+    | [Links](https://github.com/FeliksLv01/RichTextView) | Remain tappable inside rich cells | Reuses unchanged cell layouts | Ready |
+    | Long content | Columns grow up to the configured maximum width and rows expand vertically when content wraps | The outer attachment keeps its identity while rows change | 100% |
+    | Selection | The table is one selectable attachment | Copy produces tab-separated rows | Enabled |
+
+    Swipe the table horizontally to reveal the Status column.
     """
 
     private static let remoteImageURL = "https://github.githubassets.com/images/modules/logos_page/GitHub-Logo.png"

@@ -138,6 +138,27 @@ final class RichTextViewUsageTests: XCTestCase {
         )
     }
 
+    func testCustomNodeTypeCanBeRegisteredWithoutChangingTheLibrary() throws {
+        let nodeType = RichContentNodeType(rawValue: "test-answer-card")
+        let document = RichContentDocument(root: RichContentNode(
+            id: "root",
+            type: .root,
+            children: [RichContentNode(id: "card", type: nodeType)]
+        ))
+        let registry = RichContentElementBuilderRegistry.standard.registering(
+            TestCustomNodeBuilder(nodeType: nodeType)
+        )
+        let rendered = RichContentRenderer(registry: registry).render(
+            document: document,
+            constrainedWidth: 320,
+            configuration: .standard
+        )
+        let element = try XCTUnwrap(rendered.snapshot.root.children.first as? RichTextElement)
+
+        XCTAssertEqual(element.attributedText.string, "Custom answer card")
+        XCTAssertTrue(rendered.unhandledNodeTypes.isEmpty)
+    }
+
     private func makeView() -> RichTextView {
         let view = RichTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 1_000))
         view.laysOutAsynchronously = false
@@ -154,6 +175,27 @@ final class RichTextViewUsageTests: XCTestCase {
                 size: CGSize(width: 24, height: 20),
                 copyText: content.title,
                 accessibilityLabel: content.title
+            )
+        }
+    }
+
+    private final class TestCustomNodeBuilder: RichContentElementBuilding {
+        let nodeType: RichContentNodeType
+
+        init(nodeType: RichContentNodeType) {
+            self.nodeType = nodeType
+        }
+
+        func build(
+            node: RichContentNode,
+            children: [RichElement],
+            context: RichContentRenderContext
+        ) -> RichElement? {
+            RichTextElement(
+                id: node.id,
+                attributedText: NSAttributedString(string: "Custom answer card"),
+                display: .block,
+                revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
             )
         }
     }

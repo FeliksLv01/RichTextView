@@ -143,6 +143,31 @@ implementation. The Example registers `RichTextViewTreeSitter` through this
 API at launch; syntax highlighting remains an optional dependency outside the
 core renderer.
 
+Markdown tables are rendered by the core library as horizontally scrollable
+attachments. Cells still use the same node-tree renderer, so links, inline
+code, styled text, and future custom inline nodes can be mixed inside a cell.
+The built-in `RichTableStyle` follows the Example/REDoc visual baseline and can
+be replaced through `RichContentRenderingConfiguration.tableStyle`.
+
+## Custom nodes
+
+`RichContentNodeType` is open-ended. A host can define a semantic node type and
+register one builder without changing the library:
+
+```swift
+extension RichContentNodeType {
+    static let answerCard = Self(rawValue: "answer-card")
+}
+
+let registry = RichContentElementBuilderRegistry.standard
+    .registering(AnswerCardElementBuilder())
+let renderer = RichContentRenderer(registry: registry)
+```
+
+Use stable node IDs and pass the preceding document into reconciliation during
+streaming. This lets citations or application-specific cards keep
+their render identity while only changed branches receive new revisions.
+
 ## Streaming updates
 
 Pass the preceding document back to the Markdown parser so stable node IDs and
@@ -169,7 +194,7 @@ intermediate state.
 The [Example](Example) app uses the iOS 15 scene lifecycle and consumes this
 repository as a local Swift package. Its table-based catalog opens a detail page
 for each integration style: `String`, attributed image-text mixing, a complex
-typed node tree, and selectable Markdown.
+typed node tree, a horizontally scrollable rich table, and selectable Markdown.
 Generate and build its Xcode project with:
 
 ```bash

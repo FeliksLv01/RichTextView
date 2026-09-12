@@ -15,6 +15,63 @@ final class RichMarkdownParserTests: XCTestCase {
     }
 
     @MainActor
+    func testMarkdownTableUsesBuiltInScrollableAttachment() throws {
+        let parsed = RichMarkdownParser().parse(
+            """
+            | Name | Description | Status |
+            | :--- | :---------- | -----: |
+            | RichTextView | A deliberately long description that makes the table wider than its viewport. | Ready |
+            """,
+            documentID: "table"
+        )
+        let rendered = RichContentRenderer().render(
+            document: parsed.document,
+            constrainedWidth: 240,
+            configuration: .standard
+        )
+        let attachment = try XCTUnwrap(flattenElements(rendered.snapshot.root).compactMap {
+            $0 as? RichAttachmentElement
+        }.first { $0.reuseIdentifier == RichTableViewProvider.reuseIdentifier })
+        let provider = try XCTUnwrap(attachment.provider as? RichTableViewProvider)
+        let tableView = provider.makeView()
+        tableView.frame = CGRect(origin: .zero, size: attachment.metrics.size)
+        provider.updateView(tableView)
+        tableView.layoutIfNeeded()
+        let scrollView = try XCTUnwrap(tableView.subviews.compactMap { $0 as? UIScrollView }.first)
+
+        XCTAssertTrue(rendered.unhandledNodeTypes.isEmpty)
+        XCTAssertEqual(attachment.metrics.size.width, 240)
+        XCTAssertGreaterThan(attachment.metrics.size.height, 70)
+        XCTAssertTrue(scrollView.isScrollEnabled)
+        XCTAssertGreaterThan(scrollView.contentSize.width, scrollView.bounds.width)
+        XCTAssertEqual(
+            attachment.copyText,
+            "Name\tDescription\tStatus\nRichTextView\tA deliberately long description that makes the table wider than its viewport.\tReady"
+        )
+    }
+
+    func testMarkdownTablePreservesAlignmentAndStableIdentityAcrossStreamingAppend() throws {
+        let parser = RichMarkdownParser()
+        let initial = parser.parse(
+            "| Left | Right |\n| :--- | ---: |\n| A | 1 |",
+            documentID: "stream-table"
+        )
+        let updated = parser.parse(
+            "| Left | Right |\n| :--- | ---: |\n| A | 1 |\n| B | 2 |",
+            documentID: "stream-table",
+            previousDocument: initial.document
+        )
+        let initialTable = try XCTUnwrap(flatten(initial.document.root).first { $0.type == .table })
+        let updatedTable = try XCTUnwrap(flatten(updated.document.root).first { $0.type == .table })
+        let cells = flatten(updatedTable).filter { $0.type == .tableCell }
+
+        XCTAssertEqual(initialTable.id, updatedTable.id)
+        XCTAssertGreaterThan(updatedTable.revision.layout, initialTable.revision.layout)
+        XCTAssertEqual(cells.first?.content(as: RichTableCellContent.self)?.alignment, .left)
+        XCTAssertEqual(cells.dropFirst().first?.content(as: RichTableCellContent.self)?.alignment, .right)
+    }
+
+    @MainActor
     func testInlineCodeAndFencedCodeUseDistinctPresentations() throws {
         let parsed = RichMarkdownParser().parse(
             "Use `inlineCode` here.\n\n```swift\nlet value = 42\n```",

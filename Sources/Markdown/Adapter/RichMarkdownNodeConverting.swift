@@ -15,19 +15,22 @@ public struct RichMarkdownConversionContext: Sendable {
     public let textStyle: RichTextStyle
     public let listKind: RichMarkdownListKind
     public let listLevel: Int
+    public let tableColumnAlignments: [RichTableCellAlignment]
 
     public init(
         documentID: String,
         path: [Int] = [],
         textStyle: RichTextStyle = RichTextStyle(),
         listKind: RichMarkdownListKind = .none,
-        listLevel: Int = 0
+        listLevel: Int = 0,
+        tableColumnAlignments: [RichTableCellAlignment] = []
     ) {
         self.documentID = documentID
         self.path = path
         self.textStyle = textStyle
         self.listKind = listKind
         self.listLevel = listLevel
+        self.tableColumnAlignments = tableColumnAlignments
     }
 
     public var nodeID: String {
@@ -40,21 +43,24 @@ public struct RichMarkdownConversionContext: Sendable {
             path: path + [index],
             textStyle: textStyle,
             listKind: listKind,
-            listLevel: listLevel
+            listLevel: listLevel,
+            tableColumnAlignments: tableColumnAlignments
         )
     }
 
     public func replacing(
         textStyle: RichTextStyle? = nil,
         listKind: RichMarkdownListKind? = nil,
-        listLevel: Int? = nil
+        listLevel: Int? = nil,
+        tableColumnAlignments: [RichTableCellAlignment]? = nil
     ) -> Self {
         Self(
             documentID: documentID,
             path: path,
             textStyle: textStyle ?? self.textStyle,
             listKind: listKind ?? self.listKind,
-            listLevel: listLevel ?? self.listLevel
+            listLevel: listLevel ?? self.listLevel,
+            tableColumnAlignments: tableColumnAlignments ?? self.tableColumnAlignments
         )
     }
 }

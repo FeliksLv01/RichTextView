@@ -182,6 +182,23 @@ public struct RichCodeBlockContent: RichContentNodeContent, RichContentNodeConte
     public var richContentLayoutSignature: String { language }
 }
 
+public enum RichTableCellAlignment: String, Hashable, Sendable {
+    case natural
+    case left
+    case center
+    case right
+}
+
+public struct RichTableCellContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+    public let alignment: RichTableCellAlignment
+
+    public init(alignment: RichTableCellAlignment = .natural) {
+        self.alignment = alignment
+    }
+
+    public var richContentLayoutSignature: String { alignment.rawValue }
+}
+
 public struct RichHeadingContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
     public let level: Int
 
