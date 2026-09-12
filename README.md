@@ -107,8 +107,10 @@ threading, attachments, images, interaction, and selection.
 
 ## Example app
 
-The [Example](Example) app consumes this repository as a local Swift package and
-demonstrates both a directly constructed node tree and the Markdown adapter.
+The [Example](Example) app uses the iOS 15 scene lifecycle, consumes this
+repository as a local Swift package, and demonstrates `String`,
+`NSAttributedString`, a directly constructed node tree, and the Markdown
+adapter.
 Generate and build its Xcode project with:
 
 ```bash

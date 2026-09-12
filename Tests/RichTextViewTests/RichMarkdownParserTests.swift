@@ -13,6 +13,24 @@ final class RichMarkdownParserTests: XCTestCase {
         XCTAssertTrue(textNodes.contains { $0.text == "double" && $0.style.strikethrough })
     }
 
+    @MainActor
+    func testMarkdownEntryPointRendersThroughUnifiedNodeTree() {
+        let parsed = RichMarkdownParser().parse("# Title\n\nMarkdown body", documentID: "markdown")
+        let rendered = RichContentRenderer().render(
+            document: parsed.document,
+            constrainedWidth: 320,
+            configuration: .standard
+        )
+        let view = RichTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 1_000))
+        view.laysOutAsynchronously = false
+
+        view.apply(rendered.snapshot)
+
+        XCTAssertTrue(rendered.unhandledNodeTypes.isEmpty)
+        XCTAssertEqual(view.currentSnapshot?.root.id, "markdown")
+        XCTAssertGreaterThan(view.currentLayout?.contentSize.height ?? 0, 0)
+    }
+
     private func flatten(_ node: RichContentNode) -> [RichContentNode] {
         [node] + node.children.flatMap(flatten)
     }

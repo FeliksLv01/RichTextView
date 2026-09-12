@@ -5,6 +5,10 @@ import UIKit
 final class ExampleViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentView = UIView()
+    private let stringTitleLabel = UILabel()
+    private let stringView = RichTextView()
+    private let attributedStringTitleLabel = UILabel()
+    private let attributedStringView = RichTextView()
     private let nodeTreeTitleLabel = UILabel()
     private let nodeTreeView = RichTextView()
     private let markdownTitleLabel = UILabel()
@@ -15,6 +19,8 @@ final class ExampleViewController: UIViewController {
         title = "RichTextView"
         view.backgroundColor = .systemBackground
         configureViews()
+        renderString()
+        renderAttributedString()
         renderNodeTree()
         renderMarkdown()
     }
@@ -27,6 +33,15 @@ final class ExampleViewController: UIViewController {
         let contentWidth = max(0, scrollView.bounds.width - horizontalInset * 2)
         var currentY: CGFloat = 24
 
+        currentY = layout(title: stringTitleLabel, richTextView: stringView, y: currentY, width: contentWidth)
+        currentY += 28
+        currentY = layout(
+            title: attributedStringTitleLabel,
+            richTextView: attributedStringView,
+            y: currentY,
+            width: contentWidth
+        )
+        currentY += 28
         currentY = layout(title: nodeTreeTitleLabel, richTextView: nodeTreeView, y: currentY, width: contentWidth)
         currentY += 28
         currentY = layout(title: markdownTitleLabel, richTextView: markdownView, y: currentY, width: contentWidth)
@@ -45,12 +60,25 @@ final class ExampleViewController: UIViewController {
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
 
+        configureTitleLabel(stringTitleLabel, text: "String")
+        configureTitleLabel(attributedStringTitleLabel, text: "NSAttributedString")
         configureTitleLabel(nodeTreeTitleLabel, text: "Unified node tree")
         configureTitleLabel(markdownTitleLabel, text: "Markdown adapter")
+        configureRichTextView(stringView)
+        configureRichTextView(attributedStringView)
         configureRichTextView(nodeTreeView)
         configureRichTextView(markdownView)
 
-        [nodeTreeTitleLabel, nodeTreeView, markdownTitleLabel, markdownView].forEach(contentView.addSubview)
+        [
+            stringTitleLabel,
+            stringView,
+            attributedStringTitleLabel,
+            attributedStringView,
+            nodeTreeTitleLabel,
+            nodeTreeView,
+            markdownTitleLabel,
+            markdownView
+        ].forEach(contentView.addSubview)
     }
 
     private func configureTitleLabel(_ label: UILabel, text: String) {
@@ -63,6 +91,22 @@ final class ExampleViewController: UIViewController {
         richTextView.backgroundColor = .secondarySystemBackground
         richTextView.layer.cornerRadius = 12
         richTextView.isTextSelectionEnabled = true
+    }
+
+    private func renderString() {
+        stringView.text = "RichTextView can render a plain String directly."
+    }
+
+    private func renderAttributedString() {
+        let text = NSMutableAttributedString(string: "Attributed strings keep their own styles.")
+        text.addAttributes(
+            [
+                .font: UIFont.preferredFont(forTextStyle: .headline),
+                .foregroundColor: UIColor.systemIndigo
+            ],
+            range: NSRange(location: 0, length: 18)
+        )
+        attributedStringView.attributedText = text
     }
 
     private func renderNodeTree() {
