@@ -1,5 +1,8 @@
 import XCTest
 @testable import RichTextView
+#if SWIFT_PACKAGE
+@testable import RichTextViewMarkdown
+#endif
 
 final class RichMarkdownParserTests: XCTestCase {
     func testStrikethroughRequiresDoubleTilde() {

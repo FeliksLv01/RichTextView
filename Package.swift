@@ -6,7 +6,8 @@ let package = Package(
     name: "RichTextView",
     platforms: [.iOS(.v15)],
     products: [
-        .library(name: "RichTextView", targets: ["RichTextView"])
+        .library(name: "RichTextView", targets: ["RichTextView"]),
+        .library(name: "RichTextViewMarkdown", targets: ["RichTextViewMarkdown"])
     ],
     targets: [
         .binaryTarget(
@@ -16,12 +17,17 @@ let package = Package(
         ),
         .target(
             name: "RichTextView",
-            dependencies: ["Markdown"],
-            path: "Sources"
+            path: "Sources",
+            exclude: ["Markdown"]
+        ),
+        .target(
+            name: "RichTextViewMarkdown",
+            dependencies: ["RichTextView", "Markdown"],
+            path: "Sources/Markdown"
         ),
         .testTarget(
             name: "RichTextViewTests",
-            dependencies: ["RichTextView"],
+            dependencies: ["RichTextView", "RichTextViewMarkdown"],
             path: "Tests/RichTextViewTests"
         )
     ]

@@ -1,4 +1,7 @@
 import Markdown
+#if SWIFT_PACKAGE
+import RichTextView
+#endif
 
 public final class RichMarkdownTableConverter: RichMarkdownNodeConverting {
     public let markupType: Any.Type = Table.self

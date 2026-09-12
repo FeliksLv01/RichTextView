@@ -12,6 +12,14 @@ fi
 
 ruby -e 'require "cocoapods"; Pod::Command.plugin_prefixes = []; Pod::Command.run(ARGV)' -- \
   lib lint "$ROOT_DIR/RichTextView.podspec" \
+  --subspec=Core \
+  --allow-warnings \
+  --platforms=ios \
+  --verbose
+
+ruby -e 'require "cocoapods"; Pod::Command.plugin_prefixes = []; Pod::Command.run(ARGV)' -- \
+  lib lint "$ROOT_DIR/RichTextView.podspec" \
+  --subspec=Markdown \
   --include-podspecs="$MARKDOWN_PODSPEC" \
   --allow-warnings \
   --platforms=ios \

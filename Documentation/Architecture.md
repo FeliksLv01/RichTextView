@@ -1,38 +1,42 @@
 # RichTextView Architecture
 
-RichTextView is a UIKit rich-text rendering library backed by CoreText. It keeps
-the semantic document, Markdown conversion, layout, drawing, and hosted UIKit
-views separate so applications can replace content-specific behavior without
-forking the renderer.
+RichTextView is a unified rich-text node-tree renderer for UIKit, backed by
+CoreText. Its primary contract is `RichContentDocument`: every input format is
+normalized into that tree before it reaches layout or drawing. Markdown is one
+built-in input adapter, not the renderer's data model.
 
-## Modules
+## Products and source layout
 
-The package exposes one Swift module so CocoaPods and Swift Package Manager have
-the same import and API surface. Source code is grouped by responsibility:
+The core product is `RichTextView`. The optional `RichTextViewMarkdown` SwiftPM
+product adds the Markdown input adapter and depends on the core product.
+CocoaPods exposes the same boundary through the default `Core` subspec and the
+opt-in `Markdown` subspec.
+
+Source code is grouped by responsibility:
 
 ```text
 Sources
 ├── Core
-│   ├── Model       Immutable semantic document values
+│   ├── Model       Immutable unified node-tree values
 │   └── Transform   Reconciliation and projection
-├── Markdown
-│   ├── Adapter     Parser and converter registry
-│   └── Converter   swift-markdown AST converters
-└── Rendering
-    ├── Adapter     Semantic document to render-element bridge
-    ├── Builder     Element builders
-    ├── Element     Render input model
-    ├── Layout      CoreText layout and run boxes
-    ├── Render      Retained render tree and drawing layer
-    └── View        UIKit host, interaction, and selection
+├── Rendering
+│   ├── Adapter     Semantic document to render-element bridge
+│   ├── Builder     Element builders
+│   ├── Element     Render input model
+│   ├── Layout      CoreText layout and run boxes
+│   ├── Render      Retained render tree and drawing layer
+│   └── View        UIKit host, interaction, and selection
+└── Markdown
+    ├── Adapter     Parser and converter registry
+    └── Converter   swift-markdown AST converters
 ```
 
 ## Data flow
 
 ```text
-Markdown source
-    ↓ RichMarkdownParser
-RichContentDocument
+Application models ── custom adapter ──┐
+Markdown ── RichMarkdownParser ────────┼── RichContentDocument
+Other formats ── custom parser ───────┘
     ↓ RichContentRenderer
 RichElementSnapshot
     ↓ RichLayoutEngine
@@ -41,8 +45,8 @@ RichLayout
 CALayer drawing + hosted attachment views
 ```
 
-Applications may bypass Markdown and construct `RichContentDocument` or
-`RichElementSnapshot` directly.
+The renderer only consumes the unified node tree. Applications may construct it
+directly or add adapters for any source format.
 
 ## Core model
 
@@ -54,15 +58,24 @@ safe to prepare away from the main thread.
 versions. `RichContentDocumentRevealProjector` creates a visible projection for
 progressive rendering without mutating the source document.
 
-## Markdown conversion
+## Input adapters
 
-`RichMarkdownParser` parses Markdown into the semantic document through a
-registry of small node converters. Callers can register custom converters and
-provide an HTML resolver without changing the built-in pipeline.
+An input adapter converts source data into `RichContentDocument`. Application
+models, server schemas, attributed strings, and document formats can all share
+the renderer once they produce stable node IDs, typed content, children, and
+revisions.
 
-The `Markdown` binary dependency is a statically linked XCFramework built from
-the official `swift-markdown` tag plus the documented double-tilde
-strikethrough patch.
+### Markdown
+
+`RichMarkdownParser` is the built-in adapter from Markdown into the node tree.
+It parses through a registry of small node converters. Callers can register
+custom converters and provide an HTML resolver without changing the built-in
+pipeline.
+
+The adapter's `Markdown` dependency is a statically linked XCFramework built
+from the official `swift-markdown` tag plus the documented double-tilde
+strikethrough patch. Applications that use only the core renderer do not link
+that binary.
 
 ## Rendering and layout
 

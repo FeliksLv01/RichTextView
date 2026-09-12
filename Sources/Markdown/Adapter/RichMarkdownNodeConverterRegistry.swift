@@ -1,4 +1,7 @@
 import Markdown
+#if SWIFT_PACKAGE
+import RichTextView
+#endif
 
 public struct RichMarkdownNodeConverterRegistry {
     private let convertersByType: [ObjectIdentifier: any RichMarkdownNodeConverting]

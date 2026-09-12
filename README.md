@@ -1,8 +1,12 @@
 # RichTextView
 
-`RichTextView` is a UIKit rich-text rendering library built on CoreText. It
-provides immutable content nodes, reusable layout results, attachment views,
-interaction and selection, plus direct Markdown-to-render-tree conversion.
+`RichTextView` is a unified rich-text node-tree renderer for UIKit, built on
+CoreText. Applications describe content with an immutable
+`RichContentDocument`, then use the same rendering pipeline for text, links,
+mentions, images, attachments, lists, quotes, code, and custom node types.
+
+Markdown is one built-in input adapter. It converts a Markdown AST into the
+same node tree; it is not the renderer's underlying data model.
 
 The library does not include application-specific message, routing, analytics,
 theme, networking, or image-cache dependencies.
@@ -11,17 +15,25 @@ theme, networking, or image-cache dependencies.
 
 ```text
 Sources
-├── Core        Semantic document model and transforms
-├── Markdown    swift-markdown AST conversion
-└── Rendering   Elements, CoreText layout, drawing, views, and document bridge
+├── Core        Unified node-tree model and transforms
+├── Rendering   Node builders, CoreText layout, drawing, views, and interaction
+└── Markdown    Optional input path from swift-markdown AST to the node tree
 ```
 
 ## Swift Package Manager
 
-Add this repository and link the `RichTextView` product.
+Add this repository and link the `RichTextView` product. It contains the node
+tree and renderer without linking the Markdown binary.
 
 ```swift
 import RichTextView
+```
+
+To parse Markdown, also link and import the `RichTextViewMarkdown` product:
+
+```swift
+import RichTextView
+import RichTextViewMarkdown
 ```
 
 ## CocoaPods
@@ -30,17 +42,53 @@ import RichTextView
 pod 'RichTextView', '0.1.0'
 ```
 
-The Markdown parser uses the static `Markdown.xcframework` published by
-[`swift-markdown-xcframework`](https://github.com/FeliksLv01/swift-markdown-xcframework).
+Add the Markdown input adapter only when needed:
 
-## Basic usage
-
-```swift
-let view = RichTextView()
-view.text = "Plain text works without constructing a document."
+```ruby
+pod 'RichTextView/Markdown', '0.1.0'
 ```
 
-Render Markdown through the semantic document pipeline:
+The adapter uses the static `Markdown.xcframework` published by
+[`swift-markdown-xcframework`](https://github.com/FeliksLv01/swift-markdown-xcframework).
+
+## Render a node tree
+
+```swift
+let document = RichContentDocument(
+    root: RichContentNode(
+        id: "article",
+        type: .root,
+        children: [
+            RichContentNode(
+                id: "paragraph-1",
+                type: .paragraph,
+                children: [
+                    RichContentNode(
+                        id: "text-1",
+                        type: .text,
+                        content: RichTextContent(text: "A unified rich-text tree")
+                    )
+                ]
+            )
+        ]
+    )
+)
+let rendered = RichContentRenderer().render(
+    document: document,
+    constrainedWidth: 320,
+    configuration: .standard
+)
+
+let view = RichTextView()
+view.apply(rendered.snapshot)
+```
+
+For simple labels, `RichTextView` also accepts `String` and
+`NSAttributedString` directly.
+
+## Markdown input adapter
+
+Markdown is normalized into the same node tree before rendering:
 
 ```swift
 let parsed = RichMarkdownParser().parse(markdown, documentID: "article")

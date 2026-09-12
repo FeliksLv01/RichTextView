@@ -1,4 +1,7 @@
 import Markdown
+#if SWIFT_PACKAGE
+import RichTextView
+#endif
 
 public final class RichMarkdownLinkConverter: RichMarkdownNodeConverting {
     public let markupType: Any.Type = Link.self
