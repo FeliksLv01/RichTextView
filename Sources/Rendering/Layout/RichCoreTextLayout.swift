@@ -360,7 +360,12 @@ public final class RichCoreTextLayout: @unchecked Sendable {
                 )
                 RichImageDrawing.draw(
                     image,
-                    in: fittedRect(for: attachment, in: rect),
+                    in: RichImageDrawing.fittedRect(
+                        imageSize: CGSize(width: image.width, height: image.height),
+                        in: rect,
+                        contentInsets: attachment.contentInsets,
+                        contentMode: attachment.contentMode
+                    ),
                     tintColor: attachment.tintColor,
                     context: context
                 )
@@ -446,20 +451,4 @@ public final class RichCoreTextLayout: @unchecked Sendable {
         }
     }
 
-    private func fittedRect(for attachment: RichInlineImageAttachment, in rect: CGRect) -> CGRect {
-        let contentRect = rect.inset(by: attachment.contentInsets)
-        guard contentRect.width > 0, contentRect.height > 0 else { return .zero }
-        guard attachment.contentMode == .scaleAspectFit,
-              let imageSize = attachment.image?.size,
-              imageSize.width > 0,
-              imageSize.height > 0 else { return contentRect }
-        let scale = min(contentRect.width / imageSize.width, contentRect.height / imageSize.height)
-        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
-        return CGRect(
-            x: contentRect.midX - size.width / 2,
-            y: contentRect.midY - size.height / 2,
-            width: size.width,
-            height: size.height
-        )
-    }
 }

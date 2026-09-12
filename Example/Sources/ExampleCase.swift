@@ -223,7 +223,7 @@ enum ExampleCase: CaseIterable {
 
     Long-press anywhere in this document to select and copy text. The parser supports **bold**, *italic*, `inline code`, [links](https://github.com), and ~~double-tilde strikethrough~~.
 
-    Text before ![Remote GitHub image](https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png) continues after the network image, demonstrating image and text mixing in Markdown.
+    Text before ![Remote GitHub image](https://github.githubassets.com/images/modules/logos_page/GitHub-Logo.png) continues after the network image, demonstrating image and text mixing in Markdown.
 
     > Block quotes use the same container-node layout as application-built documents.
 
@@ -239,7 +239,7 @@ enum ExampleCase: CaseIterable {
     ```
     """
 
-    private static let remoteImageURL = "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
+    private static let remoteImageURL = "https://github.githubassets.com/images/modules/logos_page/GitHub-Logo.png"
 }
 
 private final class ExampleImageResolver: RichContentPresentationResolving {
@@ -254,7 +254,7 @@ private final class ExampleImageResolver: RichContentPresentationResolving {
                 image: placeholder,
                 loadsRemotely: content.source.hasPrefix("https://")
             ),
-            size: CGSize(width: 28, height: 24),
+            size: CGSize(width: 64, height: 28),
             copyText: content.title.isEmpty ? "[Image]" : "[\(content.title)]",
             accessibilityLabel: content.title.isEmpty ? "Image" : content.title
         )

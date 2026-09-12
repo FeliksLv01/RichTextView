@@ -431,12 +431,23 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
                     } else if let imageRunBox = runBox as? RichImageRunBox,
                               let image = (loadedImages[imageRunBox.element.source.identifier]
                                   ?? imageRunBox.element.source.image)?.cgImage {
-                        RichImageDrawing.draw(image, in: CGRect(
+                        let imageFrame = CGRect(
                             x: imageRunBox.frame.minX,
                             y: size.height - imageRunBox.frame.maxY,
                             width: imageRunBox.frame.width,
                             height: imageRunBox.frame.height
-                        ), tintColor: imageRunBox.element.tintColor, context: context)
+                        )
+                        RichImageDrawing.draw(
+                            image,
+                            in: RichImageDrawing.fittedRect(
+                                imageSize: CGSize(width: image.width, height: image.height),
+                                in: imageFrame,
+                                contentInsets: imageRunBox.element.contentInsets,
+                                contentMode: imageRunBox.element.contentMode
+                            ),
+                            tintColor: imageRunBox.element.tintColor,
+                            context: context
+                        )
                     } else if let decorationRunBox = runBox as? RichDecorationRunBox {
                         switch decorationRunBox.decoration {
                         case let .leadingRule(color, _):

@@ -246,6 +246,28 @@ enum RichInlineRunFactory {
 }
 
 enum RichImageDrawing {
+    static func fittedRect(
+        imageSize: CGSize,
+        in rect: CGRect,
+        contentInsets: UIEdgeInsets,
+        contentMode: UIView.ContentMode
+    ) -> CGRect {
+        let contentRect = rect.inset(by: contentInsets)
+        guard contentRect.width > 0,
+              contentRect.height > 0,
+              contentMode == .scaleAspectFit,
+              imageSize.width > 0,
+              imageSize.height > 0 else { return contentRect }
+        let scale = min(contentRect.width / imageSize.width, contentRect.height / imageSize.height)
+        let fittedSize = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        return CGRect(
+            x: contentRect.midX - fittedSize.width / 2,
+            y: contentRect.midY - fittedSize.height / 2,
+            width: fittedSize.width,
+            height: fittedSize.height
+        )
+    }
+
     static func draw(
         _ image: CGImage,
         in rect: CGRect,

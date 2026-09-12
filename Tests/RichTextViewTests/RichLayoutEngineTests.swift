@@ -3,6 +3,18 @@ import XCTest
 @testable import RichTextView
 
 final class RichLayoutEngineTests: XCTestCase {
+    func testImageAspectFitPreservesSourceRatioInsideContentInsets() {
+        let fitted = RichImageDrawing.fittedRect(
+            imageSize: CGSize(width: 200, height: 100),
+            in: CGRect(x: 10, y: 20, width: 100, height: 100),
+            contentInsets: UIEdgeInsets(top: 10, left: 5, bottom: 10, right: 5),
+            contentMode: .scaleAspectFit
+        )
+
+        XCTAssertEqual(fitted, CGRect(x: 15, y: 47.5, width: 90, height: 45))
+        XCTAssertEqual(fitted.width / fitted.height, 2)
+    }
+
     func testInlineTextBadgeBaselineOffsetMovesRunMetricsTogether() {
         let attributedText = NSAttributedString(string: "Badge", attributes: [
             .font: UIFont.systemFont(ofSize: 14)
