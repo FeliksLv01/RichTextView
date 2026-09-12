@@ -11,6 +11,19 @@ same node tree; it is not the renderer's underlying data model.
 The library does not include application-specific message, routing, analytics,
 theme, networking, or image-cache dependencies.
 
+## Example
+
+<table>
+  <tr>
+    <td align="center"><img src="Documentation/Images/example-catalog.png" width="280" alt="Example catalog"><br><sub>Example catalog</sub></td>
+    <td align="center"><img src="Documentation/Images/example-node-tree.png" width="280" alt="Unified node tree"><br><sub>Unified node tree</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="Documentation/Images/example-markdown.png" width="280" alt="Markdown and highlighted code block"><br><sub>Markdown and highlighted code block</sub></td>
+    <td align="center"><img src="Documentation/Images/example-selection.png" width="280" alt="Text selection and copy menu"><br><sub>Text selection and copy menu</sub></td>
+  </tr>
+</table>
+
 ## Structure
 
 ```text
