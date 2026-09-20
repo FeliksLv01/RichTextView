@@ -98,6 +98,9 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         set { renderLayer.displaysAsynchronously = newValue }
     }
     public var laysOutAsynchronously = true
+    /// Fade only newly appended text. Existing content, layout and selection stay unchanged.
+    public var animatesStreamingChanges = false
+
     public var preservesRenderedContentDuringAsyncUpdates = true
 
     public private(set) var currentLayout: RichTextLayout?
@@ -448,10 +451,16 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         let layout = currentLayout
         let loadedImages = loadedImages
         let displayTraits = traitCollection
+        task.animatesStreamingChanges = animatesStreamingChanges && window != nil && !UIAccessibility.isReduceMotionEnabled
+        task.layout = layout
+        task.traits = displayTraits
+        task.images = loadedImages
         task.display = { context, size, isCancelled in
             displayTraits.performAsCurrent {
                 guard let layout else { return }
-                for runBox in layout.runBoxes {
+                let clip = context.boundingBoxOfClipPath
+                let visible = CGRect(x: clip.minX, y: size.height - clip.maxY, width: clip.width, height: clip.height)
+                for runBox in layout.runBoxes where runBox.frame.intersects(visible) {
                     guard let decorationRunBox = runBox as? RichDecorationRunBox,
                           case let .background(color, cornerRadius) = decorationRunBox.decoration else { continue }
                     let rect = CGRect(
@@ -469,7 +478,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
                     ))
                     context.fillPath()
                 }
-                for runBox in layout.runBoxes {
+                for runBox in layout.runBoxes where runBox.frame.intersects(visible) {
                     if isCancelled() { return }
                     if let textRunBox = runBox as? RichTextRunBox {
                         textRunBox.layout.draw(

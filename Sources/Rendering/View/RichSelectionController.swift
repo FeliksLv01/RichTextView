@@ -23,6 +23,7 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
     private var autoScrollLink: CADisplayLink?
     private weak var autoScrollScrollView: UIScrollView?
     private var autoScrollWindowPoint: CGPoint?
+    private lazy var selectionFeedback = UISelectionFeedbackGenerator()
 
     private static let autoScrollEdgeInset: CGFloat = 64
     private static let autoScrollMinimumSpeed: CGFloat = 2
@@ -155,6 +156,7 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
         let point = gesture.location(in: hostView)
         switch gesture.state {
         case .began:
+            selectionFeedback.prepare()
             guard let initialRange = initialSelectionRange(
                 at: point,
                 policy: hostView.initialSelectionPolicy
@@ -162,6 +164,7 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
             longPressAnchorRange = initialRange
             lastDraggedHandleIsStart = nil
             updateSelection(initialRange)
+            selectionFeedback.selectionChanged()
             updateOverlay(showMenu: false)
             beginLoupeSession(at: point, in: hostView)
         case .changed:
@@ -211,6 +214,19 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
         case .currentLine:
             guard let hit = textHit(at: point),
                   let localRange = hit.runBox.layout.lineRange(at: hit.localPoint) else {
+                return nil
+            }
+            return NSRange(
+                location: hit.runBox.globalRange.location + localRange.location,
+                length: localRange.length
+            )
+        case .paragraph:
+            if let range = layout?.listItemSelectionRange(at: point) {
+                return range
+            }
+            guard let hit = textHit(at: point),
+                  let localRange = hit.runBox.layout.paragraphRange(at: hit.localPoint)
+                      ?? hit.runBox.layout.lineRange(at: hit.localPoint) else {
                 return nil
             }
             return NSRange(

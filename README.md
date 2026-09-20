@@ -183,9 +183,16 @@ previous = next
 `RichTextLayoutEngine` caches unchanged text layouts, and `RichTextView`
 cancels obsolete layout work by generation. When asynchronous drawing is
 enabled, the view keeps the preceding rendered contents visible until the next
-bitmap is ready by default. Set
+batch of changed tiles is ready by default. Unchanged prefix tiles keep their
+layers and bitmaps, and each tile only draws intersecting text. Set
 `preservesRenderedContentDuringAsyncUpdates = false` if a host prefers an empty
 intermediate state.
+
+For visible streaming messages, enable `displaysAsynchronously` and
+`animatesStreamingChanges`. The latter fades only appended words using Core
+Animation masks; it does not parse or lay out text on animation frames. Rewrites,
+reflow, width/style changes and Reduce Motion skip the transition. Disable it for
+history loads and completed messages.
 
 ## Example app
 

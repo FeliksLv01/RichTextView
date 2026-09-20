@@ -70,6 +70,7 @@ public struct RichSelection: Hashable, Sendable {
 public enum RichInitialSelectionPolicy: Sendable {
     case allContent
     case currentLine
+    case paragraph
     case word
 }
 

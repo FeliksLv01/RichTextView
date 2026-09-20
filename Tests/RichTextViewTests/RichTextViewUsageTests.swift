@@ -20,6 +20,87 @@ final class RichTextViewUsageTests: XCTestCase {
         XCTAssertTrue(view.preservesRenderedContentDuringAsyncUpdates)
     }
 
+    func testStreamingReusesUnchangedTilesAndInvalidatesAppearance() throws {
+        let view = makeView()
+        let layer = try XCTUnwrap(view.layer as? RichRenderLayer)
+        layer.maximumTileSize = CGSize(width: 320, height: 100)
+        let engine = RichTextLayoutEngine()
+        func update(_ tail: String) {
+            let document = RichContentDocument(id: "stream", children: [
+                .paragraph(id: "fixed", text: String(repeating: "Stable paragraph. ", count: 150)),
+                .paragraph(id: "tail", text: tail)
+            ])
+            let snapshot = RichContentRenderer().render(document: document, constrainedWidth: 320, configuration: .standard).snapshot
+            let layout = engine.layout(snapshot: snapshot, constrainedTo: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude))
+            view.frame.size = CGSize(width: 320, height: layout.contentSize.height)
+            view.apply(snapshot, layout: layout)
+            layer.display()
+        }
+        update("First")
+        let oldTiles = try XCTUnwrap(layer.sublayers?.first?.sublayers)
+        XCTAssertGreaterThan(oldTiles.count, 3)
+        update("First plus more streamed text")
+        let newTiles = try XCTUnwrap(layer.sublayers?.first?.sublayers)
+        let reused = zip(oldTiles, newTiles).filter { $0 === $1 }.count
+        XCTAssertGreaterThanOrEqual(reused, newTiles.count - 2)
+        print("Streaming tile reuse: \(reused)/\(newTiles.count)")
+        XCTAssertTrue(oldTiles[0] === newTiles[0], "Completed text must keep its layer and bitmap")
+        XCTAssertFalse(oldTiles.last === newTiles.last)
+        let light = view.newRenderDisplayTask()
+        light.traits = UITraitCollection(userInterfaceStyle: .light)
+        let dark = view.newRenderDisplayTask()
+        dark.traits = UITraitCollection(userInterfaceStyle: .dark)
+        XCTAssertEqual(dark.unchangedPrefixHeight(comparedTo: light), 0)
+        let container = newTiles[0].superlayer
+        view.prepareForReuse()
+        XCTAssertNil(container?.superlayer)
+    }
+
+    func testStreamingFadeOnlyIncludesAppendedTextAndRejectsRewrites() throws {
+        let view = makeView()
+        view.text = "Hello"
+        let old = view.newRenderDisplayTask()
+        view.text = "Hello world"
+        let next = view.newRenderDisplayTask()
+        let rects = try XCTUnwrap(next.appendedTextRects(comparedTo: old))
+        XCTAssertFalse(rects.isEmpty)
+        let run = try XCTUnwrap(next.layout?.textRunBoxes.first)
+        let prefix = try XCTUnwrap(run.layout.selectionRects(for: NSRange(location: 0, length: 5)).first)
+        XCTAssertTrue(rects.allSatisfy { $0.minX >= prefix.maxX })
+        view.text = "Rewritten answer"
+        XCTAssertNil(view.newRenderDisplayTask().appendedTextRects(comparedTo: next))
+    }
+
+    func testAsyncTilesKeepOldGenerationUntilReadyAndDiscardCancelledWork() async throws {
+        let layer = RichRenderLayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: 100, height: 250)
+        layer.maximumTileSize = CGSize(width: 100, height: 100)
+        let delegate = StreamingLayerDelegate()
+        layer.richDisplayDelegate = delegate
+        delegate.task.display = { context, size, _ in context.fill(CGRect(origin: .zero, size: size)) }
+        layer.display()
+        let old = try XCTUnwrap(layer.sublayers?.first)
+        let started = expectation(description: "Background drawing starts")
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        delegate.task = RichRenderLayerDisplayTask()
+        delegate.task.display = { _, _, cancelled in
+            if !cancelled() {
+                started.fulfill()
+                _ = gate.wait(timeout: .now() + 3)
+            }
+        }
+        layer.displaysAsynchronously = true
+        layer.setNeedsDisplay()
+        layer.display()
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertTrue(layer.sublayers?.first === old, "Async rendering must not clear the visible tiles")
+        layer.clearDisplayContents()
+        gate.signal()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertTrue(layer.sublayers?.isEmpty ?? true, "A reused view must reject stale rendering results")
+    }
+
     func testAttributedStringEntryPointPreservesContentAndProducesLayout() {
         let source = NSAttributedString(
             string: "Attributed text",
@@ -249,4 +330,10 @@ final class RichTextViewUsageTests: XCTestCase {
             )
         }
     }
+}
+
+@MainActor
+private final class StreamingLayerDelegate: RichRenderLayerDelegate {
+    var task = RichRenderLayerDisplayTask()
+    func newRenderDisplayTask() -> RichRenderLayerDisplayTask { task }
 }

@@ -36,4 +36,22 @@ public final class RichTextLayout: Sendable {
         attachmentRunBoxes = runBoxes.compactMap { $0 as? RichAttachmentRunBox }
         self.lines = lines
     }
+
+    func listItemSelectionRange(at point: CGPoint) -> NSRange? {
+        let marker = runBoxes.compactMap { $0 as? RichDecorationRunBox }.filter {
+            guard case .listMarker = $0.decoration else { return false }
+            return point.y >= $0.frame.minY && point.y < $0.frame.maxY
+        }.min { $0.frame.height < $1.frame.height }
+        guard let marker else { return nil }
+        let ranges = runBoxes.compactMap { runBox -> NSRange? in
+            guard runBox.frame.midY >= marker.frame.minY, runBox.frame.midY <= marker.frame.maxY else { return nil }
+            if let text = runBox as? RichTextRunBox { return text.globalRange }
+            if let image = runBox as? RichImageRunBox { return image.globalRange }
+            if let attachment = runBox as? RichAttachmentRunBox { return attachment.globalRange }
+            return nil
+        }.filter { $0.length > 0 }
+        guard let lower = ranges.map(\.location).min(),
+              let upper = ranges.map(NSMaxRange).max() else { return nil }
+        return NSRange(location: lower, length: upper - lower)
+    }
 }

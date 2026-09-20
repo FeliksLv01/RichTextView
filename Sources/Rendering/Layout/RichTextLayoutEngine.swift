@@ -232,7 +232,11 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
             )
             state.append(runBox)
         case let attachment as RichAttachmentElement:
-            let occupied = clampedSize(attachment.metrics.occupiedSize, maximumWidth: state.width)
+            let occupiedSize = attachment.metrics.occupiedSize
+            let occupied = CGSize(
+                width: min(max(0, occupiedSize.width), state.width),
+                height: max(0, occupiedSize.height)
+            )
             let frame = CGRect(origin: CGPoint(x: state.originX, y: state.cursorY), size: occupied)
             let padding = attachment.metrics.padding
             let contentFrame = CGRect(

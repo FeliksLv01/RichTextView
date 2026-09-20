@@ -145,7 +145,8 @@ final class RichCoreTextLayout: @unchecked Sendable {
         context.translateBy(x: origin.x, y: canvasHeight - origin.y - size.height)
         context.clip(to: CGRect(origin: .zero, size: size))
         drawRunBackgrounds(in: context, isCancelled: isCancelled)
-        for line in lines {
+        for line in lines where CGRect(x: line.frame.minX, y: size.height - line.frame.maxY,
+                                       width: line.frame.width, height: line.frame.height).intersects(context.boundingBoxOfClipPath) {
             guard !isCancelled() else { break }
             context.textPosition = line.coreTextOrigin
             CTLineDraw(line.line, context)
@@ -190,6 +191,21 @@ final class RichCoreTextLayout: @unchecked Sendable {
 
     func lineRange(at point: CGPoint) -> NSRange? {
         closestLine(to: point)?.range
+    }
+
+    func paragraphRange(at point: CGPoint) -> NSRange? {
+        guard let line = closestLine(to: point),
+              let position = closestPosition(to: point) else { return nil }
+        let string = attributedText.string as NSString
+        guard string.length > 0 else { return nil }
+        let index = min(max(line.range.location, position), NSMaxRange(line.range) - 1)
+        var range = string.paragraphRange(for: NSRange(location: index, length: 0))
+        while range.length > 0,
+              let scalar = UnicodeScalar(string.character(at: NSMaxRange(range) - 1)),
+              CharacterSet.newlines.contains(scalar) {
+            range.length -= 1
+        }
+        return range.length > 0 ? range : line.range
     }
 
     /// ICU 按词切分（与系统文本选择一致，中文为词粒度而非标点间整句）；
@@ -333,7 +349,8 @@ final class RichCoreTextLayout: @unchecked Sendable {
         imageResolver: ((String) -> UIImage?)?,
         isCancelled: () -> Bool
     ) {
-        for line in lines {
+        for line in lines where CGRect(x: line.frame.minX, y: size.height - line.frame.maxY,
+                                       width: line.frame.width, height: line.frame.height).intersects(context.boundingBoxOfClipPath) {
             guard !isCancelled() else { return }
             let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
             for run in runs {
@@ -374,7 +391,8 @@ final class RichCoreTextLayout: @unchecked Sendable {
     }
 
     private func drawInlineTextBadges(in context: CGContext, isCancelled: () -> Bool) {
-        for line in lines {
+        for line in lines where CGRect(x: line.frame.minX, y: size.height - line.frame.maxY,
+                                       width: line.frame.width, height: line.frame.height).intersects(context.boundingBoxOfClipPath) {
             guard !isCancelled() else { return }
             let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
             for run in runs {
@@ -433,7 +451,8 @@ final class RichCoreTextLayout: @unchecked Sendable {
     }
 
     private func drawRunBackgrounds(in context: CGContext, isCancelled: () -> Bool) {
-        for line in lines {
+        for line in lines where CGRect(x: line.frame.minX, y: size.height - line.frame.maxY,
+                                       width: line.frame.width, height: line.frame.height).intersects(context.boundingBoxOfClipPath) {
             guard !isCancelled() else { return }
             let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
             for run in runs {

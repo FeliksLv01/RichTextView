@@ -72,6 +72,7 @@ private func makeListElement(
     return RichContainerElement(
         id: node.id,
         children: children,
+        spacing: context.configuration.metrics.blockSpacing,
         contentInsets: RichContainerInsets(left: CGFloat(list.level) * context.configuration.metrics.listIndent),
         decoration: .listMarker(attributedText: markerText, width: context.configuration.metrics.listIndent)
     )

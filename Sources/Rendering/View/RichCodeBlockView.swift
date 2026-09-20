@@ -1,11 +1,75 @@
 import UIKit
 
 @MainActor
+final class RichCodeBlockHeaderView: UIView {
+    nonisolated static let height: CGFloat = 30
+
+    var onCopy: (() -> Void)?
+
+    private lazy var languageLabel: UILabel = {
+        let label = UILabel()
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.textColor = .label
+        return label
+    }()
+
+    private lazy var copyIconView: UIImageView = {
+        let configuration = UIImage.SymbolConfiguration(pointSize: 24, weight: .regular)
+        let imageView = UIImageView(image: UIImage(systemName: "doc.on.doc", withConfiguration: configuration))
+        imageView.contentMode = .scaleAspectFit
+        imageView.tintColor = .secondaryLabel
+        return imageView
+    }()
+
+    private lazy var copyControl: UIControl = {
+        let control = UIControl()
+        control.accessibilityLabel = "Copy"
+        control.accessibilityTraits = .button
+        control.addTarget(self, action: #selector(copyCode), for: .touchUpInside)
+        control.addSubview(copyIconView)
+        return control
+    }()
+
+    private lazy var dividerView: UIView = {
+        let view = UIView()
+        view.backgroundColor = .separator
+        return view
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .secondarySystemBackground
+        addSubview(languageLabel)
+        addSubview(copyControl)
+        addSubview(dividerView)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func apply(language: String) {
+        languageLabel.text = language.prefix(1).uppercased() + language.dropFirst()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        languageLabel.frame = CGRect(x: 16, y: 0, width: max(0, bounds.width - 68), height: bounds.height)
+        copyControl.frame = CGRect(x: max(0, bounds.width - 48), y: 0, width: 44, height: bounds.height)
+        copyIconView.frame = CGRect(x: 10, y: (bounds.height - 24) / 2, width: 24, height: 24)
+        dividerView.frame = CGRect(x: 0, y: max(0, bounds.height - 1), width: bounds.width, height: 1)
+    }
+
+    @objc private func copyCode() {
+        onCopy?()
+    }
+}
+
+
+@MainActor
 final class RichCodeBlockView: UIView {
-    private let headerView = UIView()
-    private let languageLabel = UILabel()
-    private let copyButton = UIButton(type: .system)
-    private let dividerView = UIView()
+    private let headerView = RichCodeBlockHeaderView()
     private let codeScrollView = UIScrollView()
     private let codeTextView = RichTextView()
     private var code = ""
@@ -35,10 +99,8 @@ final class RichCodeBlockView: UIView {
         self.contentInsets = contentInsets
         layer.cornerRadius = max(0, cornerRadius)
         let language = language?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        languageLabel.text = language.isEmpty
-            ? nil
-            : language.prefix(1).uppercased() + language.dropFirst()
-        headerHeight = language.isEmpty ? 0 : 34
+        headerView.apply(language: language)
+        headerHeight = language.isEmpty ? 0 : RichCodeBlockHeaderView.height
         headerView.isHidden = language.isEmpty
         codeTextView.attributedText = attributedCode
         setNeedsLayout()
@@ -47,9 +109,6 @@ final class RichCodeBlockView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         headerView.frame = CGRect(x: 0, y: 0, width: bounds.width, height: headerHeight)
-        languageLabel.frame = CGRect(x: 16, y: 0, width: max(0, bounds.width - 68), height: headerHeight)
-        copyButton.frame = CGRect(x: max(0, bounds.width - 40), y: 4, width: 36, height: 26)
-        dividerView.frame = CGRect(x: 0, y: max(0, headerHeight - 1), width: bounds.width, height: 1)
         codeScrollView.frame = CGRect(
             x: contentInsets.left,
             y: headerHeight + contentInsets.top,
@@ -72,20 +131,11 @@ final class RichCodeBlockView: UIView {
         layer.borderWidth = 1
         layer.borderColor = UIColor.separator.cgColor
 
-        headerView.backgroundColor = .secondarySystemBackground
+        headerView.onCopy = { [weak self] in
+            guard let self else { return }
+            UIPasteboard.general.string = code
+        }
         addSubview(headerView)
-
-        languageLabel.font = .systemFont(ofSize: 14, weight: .medium)
-        languageLabel.textColor = .label
-        headerView.addSubview(languageLabel)
-
-        copyButton.setImage(UIImage(systemName: "doc.on.doc"), for: .normal)
-        copyButton.tintColor = .secondaryLabel
-        copyButton.addTarget(self, action: #selector(copyCode), for: .touchUpInside)
-        headerView.addSubview(copyButton)
-
-        dividerView.backgroundColor = .separator
-        headerView.addSubview(dividerView)
 
         codeScrollView.showsHorizontalScrollIndicator = true
         codeScrollView.showsVerticalScrollIndicator = false
@@ -100,10 +150,6 @@ final class RichCodeBlockView: UIView {
         codeTextView.displaysAsynchronously = false
         codeTextView.lineBreakMode = .byClipping
         codeScrollView.addSubview(codeTextView)
-    }
-
-    @objc private func copyCode() {
-        UIPasteboard.general.string = code
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -141,7 +187,7 @@ final class RichCodeBlockViewProvider: RichAttachmentViewProvider, @unchecked Se
         requiredHeight = Self.requiredContentSize(
             for: attributedCode,
             contentInsets: contentInsets
-        ).height + ((language?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? 34 : 0)
+        ).height + ((language?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? RichCodeBlockHeaderView.height : 0)
     }
 
     @MainActor
@@ -171,14 +217,14 @@ final class RichCodeBlockViewProvider: RichAttachmentViewProvider, @unchecked Se
         for attributedCode: NSAttributedString,
         contentInsets: RichContainerInsets
     ) -> CGSize {
-        let bounds = attributedCode.boundingRect(
-            with: CGSize(width: 100_000, height: 100_000),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            context: nil
-        )
+        let size = RichCoreTextLayout(
+            attributedText: attributedCode,
+            constrainedWidth: 100_000,
+            lineBreakMode: .byClipping
+        )?.size ?? .zero
         return CGSize(
-            width: ceil(bounds.width) + contentInsets.left + contentInsets.right,
-            height: ceil(bounds.height) + contentInsets.top + contentInsets.bottom
+            width: size.width + contentInsets.left + contentInsets.right,
+            height: size.height + contentInsets.top + contentInsets.bottom
         )
     }
 }

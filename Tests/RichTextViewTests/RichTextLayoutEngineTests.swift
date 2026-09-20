@@ -208,6 +208,31 @@ final class RichTextLayoutEngineTests: XCTestCase {
         XCTAssertEqual(makeCount, 0)
     }
 
+    func testBlockAttachmentKeepsHeightWhenNestedContentNarrowsItsWidth() async throws {
+        let provider = await MainActor.run { CountingAttachmentProvider() }
+        let attachment = RichAttachmentElement(
+            id: "attachment",
+            metrics: RichAttachmentMetrics(size: CGSize(width: 300, height: 120)),
+            reuseIdentifier: "attachment",
+            provider: provider,
+            display: .block
+        )
+        let nested = RichContainerElement(
+            id: "nested",
+            children: [attachment],
+            contentInsets: RichContainerInsets(top: 0, left: 24, bottom: 0, right: 0)
+        )
+
+        let layout = RichTextLayoutEngine().layout(
+            snapshot: RichElementSnapshot(root: nested),
+            constrainedTo: CGSize(width: 300, height: CGFloat.greatestFiniteMagnitude)
+        )
+        let runBox = try XCTUnwrap(layout.attachmentRunBoxes.first)
+
+        XCTAssertEqual(runBox.frame.size, CGSize(width: 276, height: 120))
+        XCTAssertEqual(runBox.contentFrame.size, CGSize(width: 276, height: 120))
+    }
+
     func testDisplayOnlyRevisionKeepsGeometry() {
         let engine = RichTextLayoutEngine()
         let first = snapshot(displayRevision: 0)
@@ -325,6 +350,45 @@ final class RichTextLayoutEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(position, 0)
         XCTAssertEqual((text.string as NSString).substring(with: wordRange), "hello")
         XCTAssertFalse(rects.isEmpty)
+    }
+
+    func testCoreTextLayoutSelectsParagraphAcrossWrappedLines() throws {
+        let value = "first paragraph wraps across lines\nsecond paragraph"
+        let text = NSAttributedString(string: value, attributes: [.font: UIFont.systemFont(ofSize: 16)])
+        let layout = try XCTUnwrap(RichCoreTextLayout(attributedText: text, constrainedWidth: 90))
+        let wrappedLine = try XCTUnwrap(layout.lines.first { $0.range.location > 0 && $0.range.location < 35 })
+        let range = try XCTUnwrap(layout.paragraphRange(at: CGPoint(x: wrappedLine.frame.midX, y: wrappedLine.frame.midY)))
+
+        XCTAssertEqual((value as NSString).substring(with: range), "first paragraph wraps across lines")
+    }
+
+    func testListItemSelectionDoesNotIncludeAdjacentItem() throws {
+        let marker = RichContainerDecoration.listMarker(
+            attributedText: NSAttributedString(string: "•", attributes: [.font: UIFont.systemFont(ofSize: 16)]),
+            width: 20
+        )
+        func item(_ id: String, _ text: String) -> RichContainerElement {
+            RichContainerElement(
+                id: id,
+                children: [RichTextElement(
+                    id: "\(id).text",
+                    attributedText: NSAttributedString(string: text, attributes: [.font: UIFont.systemFont(ofSize: 16)])
+                )],
+                contentInsets: RichContainerInsets(left: 20),
+                decoration: marker
+            )
+        }
+        let layout = RichTextLayoutEngine().layout(
+            snapshot: RichElementSnapshot(root: RichContainerElement(
+                id: "root",
+                children: [item("first", "first item wraps across lines"), item("second", "second item")]
+            )),
+            constrainedTo: CGSize(width: 120, height: CGFloat.greatestFiniteMagnitude)
+        )
+        let first = try XCTUnwrap(layout.textRunBoxes.first)
+        let range = try XCTUnwrap(layout.listItemSelectionRange(at: CGPoint(x: first.frame.midX, y: first.frame.midY)))
+
+        XCTAssertEqual(range, first.globalRange)
     }
 
     func testMinimumLineHeightDoesNotClipLargerHeadingFont() throws {

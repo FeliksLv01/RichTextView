@@ -107,3 +107,26 @@ public final class RichDecorationRunBox: RichRunBox, @unchecked Sendable {
         super.init(id: id, frame: frame)
     }
 }
+
+extension RichRunBox {
+    func hasSameDrawing(as other: RichRunBox) -> Bool {
+        guard id == other.id, frame == other.frame else { return false }
+        switch (self, other) {
+        case let (a as RichTextRunBox, b as RichTextRunBox):
+            return a.layout === b.layout
+        case let (a as RichDecorationRunBox, b as RichDecorationRunBox):
+            switch (a.decoration, b.decoration) {
+            case let (.background(ac, ar), .background(bc, br)): return ac == bc && ar == br
+            case let (.leadingRule(ac, aw), .leadingRule(bc, bw)): return ac == bc && aw == bw
+            case let (.horizontalRule(ac), .horizontalRule(bc)): return ac == bc
+            case let (.listMarker(at, aw), .listMarker(bt, bw)): return at == bt && aw == bw
+            default: return false
+            }
+        case let (a as RichImageRunBox, b as RichImageRunBox):
+            return a.element === b.element
+        case (is RichAttachmentRunBox, is RichAttachmentRunBox):
+            return true // Attachments draw in their own UIViews.
+        default: return false
+        }
+    }
+}

@@ -149,7 +149,42 @@ final class RichMarkdownParserTests: XCTestCase {
             ).width,
             320
         )
+        let multiline = NSAttributedString(
+            string: "first line\nsecond line\nthird line",
+            attributes: [.font: UIFont.monospacedSystemFont(ofSize: 17, weight: .regular)]
+        )
+        let insets = RichContainerInsets(top: 12, left: 16, bottom: 12, right: 16)
+        let measured = RichCodeBlockViewProvider.requiredContentSize(for: multiline, contentInsets: insets)
+        let displayed = RichTextView()
+        displayed.lineBreakMode = .byClipping
+        displayed.attributedText = multiline
+        XCTAssertEqual(
+            measured.height,
+            displayed.sizeThatFits(CGSize(width: 320, height: 100_000)).height + insets.top + insets.bottom
+        )
         XCTAssertTrue(rendered.unhandledNodeTypes.isEmpty)
+    }
+
+    func testCodeBlockInsideListItemKeepsBlockSpacing() throws {
+        let parsed = makeParser().parse(
+            "- 使用示例：\n\n  ```swift\n  let value = 42\n  ```",
+            documentID: "list-code"
+        )
+        let rendered = RichContentRenderer().render(
+            document: parsed.document,
+            constrainedWidth: 320,
+            configuration: .standard
+        )
+        let layout = RichTextLayoutEngine().layout(
+            snapshot: rendered.snapshot,
+            constrainedTo: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+        )
+        let label = try XCTUnwrap(layout.textRunBoxes.first)
+        let code = try XCTUnwrap(layout.attachmentRunBoxes.first {
+            $0.element.reuseIdentifier == RichCodeBlockViewProvider.reuseIdentifier
+        })
+
+        XCTAssertEqual(code.frame.minY - label.frame.maxY, RichContentLayoutMetrics().blockSpacing)
     }
 
     @MainActor
