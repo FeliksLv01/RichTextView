@@ -186,6 +186,18 @@ public struct RichCodeBlockContent: RichContentNodeContent, RichContentNodeConte
     public var richContentLayoutSignature: String { language }
 }
 
+public struct RichMathContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+    public let latex: String
+    public let isBlock: Bool
+
+    public init(latex: String, isBlock: Bool) {
+        self.latex = latex
+        self.isBlock = isBlock
+    }
+
+    public var richContentLayoutSignature: String { "\(isBlock)|\(latex)" }
+}
+
 public enum RichTableCellAlignment: String, Hashable, Sendable {
     case natural
     case left

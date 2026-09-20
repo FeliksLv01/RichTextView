@@ -919,6 +919,14 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
             element.accessibilityTraits = .image
             elements.append(element)
         }
+        for runBox in layout.attachmentRunBoxes {
+            guard let label = runBox.element.accessibilityLabel else { continue }
+            let element = UIAccessibilityElement(accessibilityContainer: self)
+            element.accessibilityLabel = label
+            element.accessibilityFrameInContainerSpace = runBox.contentFrame
+            element.accessibilityTraits = .staticText
+            elements.append(element)
+        }
         accessibilityElements = elements
     }
 }

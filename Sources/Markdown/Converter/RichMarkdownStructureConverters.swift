@@ -89,6 +89,16 @@ public final class RichMarkdownCodeBlockConverter: RichMarkdownNodeConverting {
         context: RichMarkdownConversionContext
     ) -> [RichContentNode] {
         guard let codeBlock = markup as? CodeBlock else { return [] }
+        if codeBlock.language == "blockmath" {
+            return [RichContentNode(
+                id: context.nodeID,
+                type: .math,
+                content: RichMathContent(
+                    latex: codeBlock.code.trimmingCharacters(in: .whitespacesAndNewlines),
+                    isBlock: true
+                )
+            )]
+        }
         let style = RichTextStyle(
             bold: context.textStyle.bold,
             italic: context.textStyle.italic,

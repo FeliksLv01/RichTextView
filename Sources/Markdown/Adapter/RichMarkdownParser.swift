@@ -33,7 +33,7 @@ public struct RichMarkdownParser {
         documentID: String,
         previousDocument: RichContentDocument? = nil
     ) -> RichMarkdownParseResult {
-        let markup = Document(parsing: source, options: [.parseBlockDirectives, .parseSymbolLinks])
+        let markup = Document(parsing: Self.preprocessMath(source), options: [.parseBlockDirectives, .parseSymbolLinks])
         return parse(markup, documentID: documentID, previousDocument: previousDocument)
     }
 
@@ -52,6 +52,25 @@ public struct RichMarkdownParser {
             plainText: document.plainText,
             visibleUnitCount: revealProjector.unitCount(in: document)
         )
+    }
+
+    private static func preprocessMath(_ source: String) -> String {
+        source
+            .replacingOccurrences(
+                of: #"(?ms)^[\t ]*\$\$(?:\r?\n)?(.+?)(?:\r?\n)?[\t ]*\$\$[\t ]*$"#,
+                with: "```blockmath\n$1\n```",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?ms)^[\t ]*\\\[(?:\r?\n)?(.+?)(?:\r?\n)?[\t ]*\\\][\t ]*$"#,
+                with: "```blockmath\n$1\n```",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"\\\((.+?)\\\)"#,
+                with: "`richmath:$1`",
+                options: .regularExpression
+            )
     }
 
     private func convert(

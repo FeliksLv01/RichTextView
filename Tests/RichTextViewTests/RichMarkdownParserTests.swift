@@ -1,11 +1,37 @@
 import XCTest
 import UIKit
+import iosMath
 @testable import RichTextView
 #if SWIFT_PACKAGE
 @testable import RichTextViewMarkdown
 #endif
 
 final class RichMarkdownParserTests: XCTestCase {
+    @MainActor
+    func testInlineAndBlockMathRenderAsNativeLabels() throws {
+        let parsed = makeParser().parse(
+            "Inline \\(x^2 + y^2\\).\n\n$$\n\\frac{a}{b}\n$$",
+            documentID: "math"
+        )
+        let rendered = RichContentRenderer().render(
+            document: parsed.document,
+            constrainedWidth: 320,
+            configuration: .standard
+        )
+        let attachments = flattenElements(rendered.snapshot.root).compactMap { $0 as? RichAttachmentElement }
+        let inline = try XCTUnwrap(attachments.first { if case .inline = $0.display { true } else { false } })
+        let block = try XCTUnwrap(attachments.first { if case .block = $0.display { true } else { false } })
+
+        XCTAssertEqual(attachments.count, 2)
+        XCTAssertTrue(inline.provider.makeView() is MTMathUILabel)
+        XCTAssertTrue(block.provider.makeView() is MTMathUILabel)
+        XCTAssertEqual(inline.accessibilityLabel, "x^2 + y^2")
+        XCTAssertEqual(block.accessibilityLabel, "\\frac{a}{b}")
+        XCTAssertGreaterThan(inline.metrics.size.width, 0)
+        XCTAssertGreaterThan(block.metrics.size.height, 0)
+        XCTAssertTrue(rendered.unhandledNodeTypes.isEmpty)
+    }
+
     func testStrikethroughRequiresDoubleTilde() {
         let result = makeParser().parse("~single~ and ~~double~~", documentID: "document")
         let textNodes = flatten(result.document.root).compactMap { $0.content(as: RichTextContent.self) }

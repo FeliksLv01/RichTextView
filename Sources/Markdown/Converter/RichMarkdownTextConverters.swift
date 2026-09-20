@@ -91,6 +91,13 @@ public final class RichMarkdownInlineCodeConverter: RichMarkdownNodeConverting {
         context: RichMarkdownConversionContext
     ) -> [RichContentNode] {
         guard let code = markup as? InlineCode else { return [] }
+        if code.code.hasPrefix("richmath:") {
+            return [RichContentNode(
+                id: context.nodeID,
+                type: .math,
+                content: RichMathContent(latex: String(code.code.dropFirst(9)), isBlock: false)
+            )]
+        }
         return [RichContentNode(
             id: context.nodeID,
             type: .text,

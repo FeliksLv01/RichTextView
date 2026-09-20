@@ -50,6 +50,7 @@ public final class RichAttachmentElement: RichElement, @unchecked Sendable {
     public let reuseIdentifier: String
     public let provider: any RichAttachmentViewProvider
     public let copyText: String?
+    public let accessibilityLabel: String?
     public let isSelectable: Bool
 
     public init(
@@ -59,6 +60,7 @@ public final class RichAttachmentElement: RichElement, @unchecked Sendable {
         reuseIdentifier: String,
         provider: any RichAttachmentViewProvider,
         copyText: String? = nil,
+        accessibilityLabel: String? = nil,
         isSelectable: Bool = false,
         display: RichElementDisplay = .block,
         revision: RichElementRevision = .initial
@@ -69,6 +71,7 @@ public final class RichAttachmentElement: RichElement, @unchecked Sendable {
         self.reuseIdentifier = reuseIdentifier
         self.provider = provider
         self.copyText = copyText
+        self.accessibilityLabel = accessibilityLabel
         self.isSelectable = isSelectable
         super.init(id: id, revision: revision, display: display)
     }

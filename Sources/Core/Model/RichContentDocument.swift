@@ -136,6 +136,9 @@ public extension RichContentNode {
         if let image = content(as: RichImageContent.self) {
             return image.title.isEmpty ? "[图片]" : "[\(image.title)]"
         }
+        if let math = content(as: RichMathContent.self) {
+            return math.isBlock ? "$$\(math.latex)$$" : "\\(\(math.latex)\\)"
+        }
         let separator = type == .root ? "\n" : ""
         return children.map(\.plainText).joined(separator: separator)
     }

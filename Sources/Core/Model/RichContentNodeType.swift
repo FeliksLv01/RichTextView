@@ -20,6 +20,7 @@ public extension RichContentNodeType {
     static let bulletedList = Self(rawValue: "bulleted-list")
     static let blockQuote = Self(rawValue: "block-quote")
     static let codeBlock = Self(rawValue: "code-block")
+    static let math = Self(rawValue: "math")
     static let table = Self(rawValue: "table")
     static let tableHead = Self(rawValue: "table-head")
     static let tableBody = Self(rawValue: "table-body")
