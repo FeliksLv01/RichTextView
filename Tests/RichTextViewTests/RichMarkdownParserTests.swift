@@ -8,6 +8,33 @@ import iosMath
 
 final class RichMarkdownParserTests: XCTestCase {
     @MainActor
+    func testThirdLevelBulletIsSmallerThanParentBullets() throws {
+        let parsed = makeParser().parse(
+            "- 111\n  - 222\n    - eeee",
+            documentID: "nested-bullets"
+        )
+        let rendered = RichContentRenderer().render(
+            document: parsed.document,
+            constrainedWidth: 320,
+            configuration: .standard
+        )
+        let markers = flattenElements(rendered.snapshot.root).compactMap { element -> NSAttributedString? in
+            guard
+                let container = element as? RichContainerElement,
+                case let .listMarker(attributedText, _) = container.decoration
+            else { return nil }
+            return attributedText
+        }
+        let fonts = try markers.map { marker in
+            try XCTUnwrap(marker.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)
+        }
+
+        XCTAssertEqual(markers.map(\.string), ["•", "◦", "▪"])
+        XCTAssertEqual(fonts[0].pointSize, fonts[1].pointSize)
+        XCTAssertEqual(fonts[2].pointSize, fonts[1].pointSize * 0.4, accuracy: 0.001)
+    }
+
+    @MainActor
     func testInlineAndBlockMathRenderAsNativeLabels() throws {
         let parsed = makeParser().parse(
             "Inline \\(x^2 + y^2\\).\n\n$$\n\\frac{a}{b}\n$$",

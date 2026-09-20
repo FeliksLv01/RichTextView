@@ -50,7 +50,14 @@ public final class RichBulletedListElementBuilder: RichContentElementBuilding {
     public func build(node: RichContentNode, children: [RichElement], context: RichContentRenderContext) -> RichElement? {
         guard let list = node.content(as: RichListContent.self) else { return nil }
         let marker = list.level % 3 == 1 ? "•" : (list.level % 3 == 2 ? "◦" : "▪")
-        return makeListElement(node: node, children: children, marker: marker, list: list, context: context)
+        return makeListElement(
+            node: node,
+            children: children,
+            marker: marker,
+            markerScale: list.level % 3 == 0 ? 0.4 : 1,
+            list: list,
+            context: context
+        )
     }
 }
 
@@ -58,13 +65,17 @@ private func makeListElement(
     node: RichContentNode,
     children: [RichElement],
     marker: String,
+    markerScale: CGFloat = 1,
     list: RichListContent,
     context: RichContentRenderContext
 ) -> RichElement {
+    let bodyFont = context.configuration.font
+    let markerFont = bodyFont.withSize(bodyFont.pointSize * markerScale)
     let markerText = NSAttributedString(
         string: marker,
         attributes: [
-            .font: context.configuration.font,
+            .font: markerFont,
+            .baselineOffset: (bodyFont.capHeight - markerFont.capHeight) / 2,
             .foregroundColor: context.configuration.secondaryTextColor,
             .paragraphStyle: richParagraphStyle(context.configuration)
         ]
