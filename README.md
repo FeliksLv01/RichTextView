@@ -16,7 +16,7 @@ networking, or image-cache dependencies.
 <table>
   <tr>
     <td align="center"><img src="Documentation/Images/example-node-tree.png" width="240" alt="Unified node tree"><br><sub>Unified node tree</sub></td>
-    <td align="center"><img src="Documentation/Images/example-markdown.png" width="240" alt="Selectable Markdown and tables"><br><sub>Selectable Markdown and tables</sub></td>
+    <td align="center"><img src="Documentation/Images/example-markdown.png" width="240" alt="Markdown selection and Copy menu"><br><sub>Markdown selection and Copy menu</sub></td>
     <td align="center"><img src="Documentation/Images/example-math.png" width="240" alt="Native LaTeX formulas"><br><sub>Native LaTeX formulas</sub></td>
   </tr>
 </table>
