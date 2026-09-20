@@ -33,7 +33,7 @@ let package = Package(
         .binaryTarget(
             name: "iosMath",
             url: "https://github.com/FeliksLv01/RichTextViewBinaries/releases/download/iosMath-2.5.0.1/iosMath.xcframework.zip",
-            checksum: "71b31789af1911f47e820d0c00367bf98837ce462217a93c5a07b7ecaa49a260"
+            checksum: "7df8ca162ecdfdedf2ee25e68b737ec9777b7a92aaa7a529fe856e1f12c9e55d"
         ),
         .target(
             name: "RichTextView",
