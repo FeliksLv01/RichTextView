@@ -75,7 +75,7 @@ private func makeListElement(
         string: marker,
         attributes: [
             .font: markerFont,
-            .baselineOffset: (bodyFont.capHeight - markerFont.capHeight) / 2,
+            .baselineOffset: (bodyFont.xHeight - markerFont.capHeight) / 2,
             .foregroundColor: context.configuration.secondaryTextColor,
             .paragraphStyle: richParagraphStyle(context.configuration)
         ]

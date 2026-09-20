@@ -32,6 +32,10 @@ final class RichMarkdownParserTests: XCTestCase {
         XCTAssertEqual(markers.map(\.string), ["•", "◦", "▪"])
         XCTAssertEqual(fonts[0].pointSize, fonts[1].pointSize)
         XCTAssertEqual(fonts[2].pointSize, fonts[1].pointSize * 0.4, accuracy: 0.001)
+        XCTAssertEqual(
+            markers[2].attribute(.baselineOffset, at: 0, effectiveRange: nil) as? CGFloat,
+            (fonts[1].xHeight - fonts[2].capHeight) / 2
+        )
     }
 
     @MainActor
@@ -50,8 +54,11 @@ final class RichMarkdownParserTests: XCTestCase {
         let block = try XCTUnwrap(attachments.first { if case .block = $0.display { true } else { false } })
 
         XCTAssertEqual(attachments.count, 2)
-        XCTAssertTrue(inline.provider.makeView() is MTMathUILabel)
-        XCTAssertTrue(block.provider.makeView() is MTMathUILabel)
+        let inlineLabel = try XCTUnwrap(inline.provider.makeView() as? MTMathUILabel)
+        let blockLabel = try XCTUnwrap(block.provider.makeView() as? MTMathUILabel)
+        XCTAssertEqual(inlineLabel.textAlignment, .left)
+        XCTAssertEqual(blockLabel.textAlignment, .center)
+        XCTAssertEqual(block.metrics.size.width, 320)
         XCTAssertEqual(inline.accessibilityLabel, "x^2 + y^2")
         XCTAssertEqual(block.accessibilityLabel, "\\frac{a}{b}")
         XCTAssertGreaterThan(inline.metrics.size.width, 0)

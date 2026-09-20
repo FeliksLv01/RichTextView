@@ -18,7 +18,7 @@ public final class RichMathElementBuilder: RichContentElementBuilding {
             id: node.id,
             metrics: RichAttachmentMetrics(
                 size: CGSize(
-                    width: content.isBlock ? min(size.width, context.constrainedWidth) : size.width,
+                    width: content.isBlock ? context.constrainedWidth : size.width,
                     height: size.height
                 ),
                 verticalAlignment: .baseline
@@ -85,6 +85,7 @@ final class RichMathViewProvider: RichAttachmentViewProvider, @unchecked Sendabl
         label.textColor = textColor
         label.displayErrorInline = false
         label.mode = isBlock ? .display : .text
+        label.textAlignment = isBlock ? .center : .left
         label.isAccessibilityElement = true
         label.accessibilityLabel = latex
     }
