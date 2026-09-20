@@ -1,17 +1,5 @@
 import UIKit
 
-public struct RichElementRevision: Hashable, Sendable {
-    public let layout: Int
-    public let display: Int
-
-    public init(layout: Int, display: Int) {
-        self.layout = layout
-        self.display = display
-    }
-
-    public static let initial = RichElementRevision(layout: 0, display: 0)
-}
-
 public enum RichElementDisplay: Sendable {
     case inline
     case block
@@ -42,19 +30,16 @@ public enum RichContainerDecoration: @unchecked Sendable {
 
 open class RichElement: @unchecked Sendable {
     public let id: String
-    public let revision: RichElementRevision
     public let display: RichElementDisplay
 
     open var children: [RichElement] { [] }
 
     public init(
         id: String,
-        revision: RichElementRevision = .initial,
         display: RichElementDisplay
     ) {
         precondition(!id.isEmpty, "RichElement ID must not be empty")
         self.id = id
-        self.revision = revision
         self.display = display
     }
 
@@ -77,14 +62,13 @@ public final class RichContainerElement: RichElement, @unchecked Sendable {
         display: RichElementDisplay = .block,
         spacing: CGFloat = 0,
         contentInsets: RichContainerInsets = .zero,
-        decoration: RichContainerDecoration? = nil,
-        revision: RichElementRevision = .initial
+        decoration: RichContainerDecoration? = nil
     ) {
         storedChildren = children
         self.spacing = spacing
         self.contentInsets = contentInsets
         self.decoration = decoration
-        super.init(id: id, revision: revision, display: display)
+        super.init(id: id, display: display)
     }
 
     public override func replacingChildren(_ children: [RichElement]) -> RichElement {
@@ -94,8 +78,7 @@ public final class RichContainerElement: RichElement, @unchecked Sendable {
             display: display,
             spacing: spacing,
             contentInsets: contentInsets,
-            decoration: decoration,
-            revision: revision
+            decoration: decoration
         )
     }
 }
@@ -106,11 +89,10 @@ public final class RichBreakElement: RichElement, @unchecked Sendable {
     public init(
         id: String,
         extent: CGFloat = 0,
-        display: RichElementDisplay = .block,
-        revision: RichElementRevision = .initial
+        display: RichElementDisplay = .block
     ) {
         self.extent = extent
-        super.init(id: id, revision: revision, display: display)
+        super.init(id: id, display: display)
     }
 }
 
@@ -123,12 +105,11 @@ public final class RichDividerElement: RichElement, @unchecked Sendable {
         id: String,
         color: UIColor,
         lineHeight: CGFloat = 1,
-        extent: CGFloat = 9,
-        revision: RichElementRevision = .initial
+        extent: CGFloat = 9
     ) {
         self.color = color
         self.lineHeight = max(0, lineHeight)
         self.extent = max(lineHeight, extent)
-        super.init(id: id, revision: revision, display: .block)
+        super.init(id: id, display: .block)
     }
 }

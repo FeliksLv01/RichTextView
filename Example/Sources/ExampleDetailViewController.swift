@@ -10,9 +10,11 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
     private let selectionMenuPresenter = ExampleSelectionMenuPresenter()
     private let contentResolver = ExampleContentResolver()
     private lazy var richTextView = RichTextView(imageLoader: imageLoader)
-    private lazy var markdownTypewriter = ExampleMarkdownTypewriter { [weak self] update in
+    private lazy var markdownTypewriter = ExampleMarkdownTypewriter(source: example == .math ? ExampleCase.mathMarkdown : nil) { [weak self] update in
         self?.applyTypewriterUpdate(update)
     }
+    private let streamingRenderer = RichContentRenderer()
+    private let streamingLayoutEngine = RichTextLayoutEngine()
     private var renderedWidth: CGFloat = 0
     private var followsStreamingContent = true
     private var needsStreamingScrollToBottom = false
@@ -34,9 +36,10 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
         navigationItem.largeTitleDisplayMode = .never
         view.backgroundColor = .systemBackground
         configureViews()
-        if example == .markdownStreaming {
+        if example == .markdownStreaming || example == .math {
             navigationItem.rightBarButtonItem = UIBarButtonItem(
-                barButtonSystemItem: .refresh,
+                title: "Replay",
+                style: .plain,
                 target: self,
                 action: #selector(restartTypewriter)
             )
@@ -45,7 +48,7 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if example == .markdownStreaming {
+        if example == .markdownStreaming || (example == .math && ProcessInfo.processInfo.arguments.contains("--replay")) {
             markdownTypewriter.start()
         }
     }
@@ -167,15 +170,17 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
 
     private func applyTypewriterUpdate(_ update: ExampleMarkdownTypewriter.Update) {
         streamingDocument = update.document
-        example.apply(
-            document: update.document,
-            to: richTextView,
-            constrainedWidth: max(1, renderedWidth),
-            resolver: contentResolver
-        )
+        let snapshot = streamingRenderer.render(document: update.document,
+            constrainedWidth: max(1, renderedWidth), configuration: ExampleCase.renderingConfiguration,
+            resolver: contentResolver, streaming: !update.isComplete).snapshot
+        let layout = streamingLayoutEngine.layout(snapshot: snapshot,
+            constrainedTo: CGSize(width: max(1, renderedWidth), height: .greatestFiniteMagnitude))
+        richTextView.displaysAsynchronously = true
+        richTextView.animatesStreamingChanges = !update.isComplete
+        richTextView.apply(snapshot, layout: layout)
         let progress = update.isComplete
-            ? "Complete · \(update.totalUnitCount) semantic units"
-            : "Typing · \(update.visibleUnitCount)/\(update.totalUnitCount) received semantic units"
+            ? "Complete · \(update.totalUnitCount) characters"
+            : "Typing · \(update.visibleUnitCount)/\(update.totalUnitCount) characters"
         noteLabel.text = "\(example.note)\n\n\(progress)"
         needsStreamingScrollToBottom = followsStreamingContent
         view.setNeedsLayout()

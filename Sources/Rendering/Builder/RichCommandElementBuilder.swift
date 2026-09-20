@@ -1,6 +1,7 @@
 import UIKit
 
 public final class RichCommandElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.command
     public init() {}
 

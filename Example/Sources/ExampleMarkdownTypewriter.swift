@@ -11,44 +11,30 @@ final class ExampleMarkdownTypewriter {
         let isComplete: Bool
     }
 
-    private static let tickIntervalNanoseconds: UInt64 = 30_000_000
-    private static let chunkIntervalInTicks = 35
-
-    private let chunks = ExampleMarkdownTypewriter.markdownChunks
+    private let source: [Character]
     private let parser = RichMarkdownParser(imageSize: CGSize(width: 28, height: 28))
-    private let projector = RichContentDocumentRevealProjector(configuration: .init(
-        entryUnitNodeTypes: [.table],
-        unmeteredSubtreeNodeTypes: [.tableHead]
-    ))
     private let onUpdate: (Update) -> Void
     private var task: Task<Void, Never>?
-    private var receivedChunkCount = 0
-    private var visibleUnitCount = 0
-    private var tickCount = 0
-    private var parsedDocument: RichContentDocument?
-    private var projectedDocument: RichContentDocument?
 
-    init(onUpdate: @escaping (Update) -> Void) {
+    init(source: String? = nil, onUpdate: @escaping (Update) -> Void) {
+        self.source = Array(source ?? Self.markdownChunks.joined(separator: "\n\n"))
         self.onUpdate = onUpdate
     }
 
-    deinit {
-        task?.cancel()
-    }
+    deinit { task?.cancel() }
 
     func start() {
         stop()
-        receivedChunkCount = 0
-        visibleUnitCount = 0
-        tickCount = 0
-        parsedDocument = nil
-        projectedDocument = nil
-        advance()
         task = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: Self.tickIntervalNanoseconds)
-                guard !Task.isCancelled, let self else { return }
-                self.advance()
+            guard let count = self?.source.count else { return }
+            var text = ""
+            for index in 0..<count {
+                do { try await Task.sleep(nanoseconds: 20_000_000) } catch { return }
+                guard let self else { return }
+                text.append(self.source[index])
+                let complete = index + 1 == count
+                let document = self.parser.parse(text, documentID: "streaming-example", streaming: !complete).document
+                self.onUpdate(Update(document: document, visibleUnitCount: index + 1, totalUnitCount: count, isComplete: complete))
             }
         }
     }
@@ -58,54 +44,11 @@ final class ExampleMarkdownTypewriter {
         task = nil
     }
 
-    private func advance() {
-        tickCount += 1
-        if tickCount == 1 || tickCount.isMultiple(of: Self.chunkIntervalInTicks) {
-            receiveNextChunk()
-        }
-        guard let parsedDocument else { return }
-        let totalUnitCount = projector.unitCount(in: parsedDocument)
-        visibleUnitCount = min(visibleUnitCount + 1, totalUnitCount)
-        let projection = projector.project(
-            parsedDocument,
-            visibleUnitCount: visibleUnitCount,
-            previousProjection: projectedDocument
-        )
-        visibleUnitCount = projection.visibleUnitCount
-        projectedDocument = projection.document
-        let isComplete = receivedChunkCount == chunks.count
-            && projection.visibleUnitCount == projection.totalUnitCount
-        onUpdate(Update(
-            document: projection.document,
-            visibleUnitCount: projection.visibleUnitCount,
-            totalUnitCount: projection.totalUnitCount,
-            isComplete: isComplete
-        ))
-        if isComplete {
-            stop()
-        }
-    }
-
-    private func receiveNextChunk() {
-        guard receivedChunkCount < chunks.count else { return }
-        receivedChunkCount += 1
-        let receivedSource = chunks
-            .prefix(receivedChunkCount)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .joined(separator: "\n\n")
-        let result = parser.parse(
-            receivedSource,
-            documentID: "streaming-example",
-            previousDocument: parsedDocument
-        )
-        parsedDocument = result.document
-    }
-
     private static let markdownChunks = [
         """
         # Streaming answer
 
-        RichTextView receives **partial Markdown**, reconciles stable nodes, and keeps the previous rendered frame visible while new layout work runs.
+        RichTextView receives **partial Markdown**, reuses unchanged elements, and keeps the previous rendered frame visible while new layout work runs.
 
         """,
         """
@@ -119,7 +62,7 @@ final class ExampleMarkdownTypewriter {
         """
         | Layer | Responsibility | Result |
         | :-- | :-- | --: |
-        | Parser | Reconcile semantic nodes | Stable IDs |
+        | Parser | Parse semantic nodes | Stable IDs |
         | Layout | Reuse unchanged runs | Less work |
         | Display | Preserve the previous bitmap | No flash |
 
@@ -132,7 +75,7 @@ final class ExampleMarkdownTypewriter {
 
         """,
         """
-        The simulated server emits complete Markdown blocks. The typewriter reveals one semantic unit every 30 ms and continues until it catches up.
+        The source arrives one character every 20 ms. Formula previews temporarily close unfinished environments without changing the source.
         """
     ]
 }

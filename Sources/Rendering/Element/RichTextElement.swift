@@ -28,14 +28,13 @@ public class RichTextElement: RichElement, @unchecked Sendable {
         copyText: String? = nil,
         maximumNumberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byWordWrapping,
-        display: RichElementDisplay = .inline,
-        revision: RichElementRevision = .initial
+        display: RichElementDisplay = .inline
     ) {
         self.attributedText = NSAttributedString(attributedString: attributedText)
         self.copyText = copyText ?? attributedText.string
         self.maximumNumberOfLines = max(0, maximumNumberOfLines)
         self.lineBreakMode = lineBreakMode
-        super.init(id: id, revision: revision, display: display)
+        super.init(id: id, display: display)
     }
 }
 
@@ -53,8 +52,7 @@ public final class RichAnchorElement: RichTextElement, RichActionElement, @unche
         copyText: String? = nil,
         maximumNumberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byWordWrapping,
-        display: RichElementDisplay = .inline,
-        revision: RichElementRevision = .initial
+        display: RichElementDisplay = .inline
     ) {
         self.actionIdentifier = actionIdentifier
         super.init(
@@ -63,8 +61,7 @@ public final class RichAnchorElement: RichTextElement, RichActionElement, @unche
             copyText: copyText,
             maximumNumberOfLines: maximumNumberOfLines,
             lineBreakMode: lineBreakMode,
-            display: display,
-            revision: revision
+            display: display
         )
     }
 }
@@ -93,8 +90,7 @@ public final class RichTextBadgeElement: RichElement, RichActionElement, @unchec
         borderWidth: CGFloat = 0,
         baselineOffset: CGFloat = 0,
         actionIdentifier: String,
-        copyText: String? = nil,
-        revision: RichElementRevision = .initial
+        copyText: String? = nil
     ) {
         let attributedText = NSAttributedString(
             string: text,
@@ -113,7 +109,7 @@ public final class RichTextBadgeElement: RichElement, RichActionElement, @unchec
         self.actionIdentifier = actionIdentifier
         self.copyText = copyText ?? text
         self.attributedText = attributedText
-        super.init(id: id, revision: revision, display: .inline)
+        super.init(id: id, display: .inline)
     }
 
     public init(
@@ -126,8 +122,7 @@ public final class RichTextBadgeElement: RichElement, RichActionElement, @unchec
         borderWidth: CGFloat = 0,
         baselineOffset: CGFloat = 0,
         actionIdentifier: String = "",
-        copyText: String? = nil,
-        revision: RichElementRevision = .initial
+        copyText: String? = nil
     ) {
         self.contentInsets = contentInsets
         self.outerInsets = outerInsets
@@ -138,6 +133,6 @@ public final class RichTextBadgeElement: RichElement, RichActionElement, @unchec
         self.actionIdentifier = actionIdentifier
         self.copyText = copyText ?? attributedText.string
         self.attributedText = NSAttributedString(attributedString: attributedText)
-        super.init(id: id, revision: revision, display: .inline)
+        super.init(id: id, display: .inline)
     }
 }

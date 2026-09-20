@@ -20,14 +20,10 @@ open class RichRenderObject: @unchecked Sendable {
     public private(set) var children: [RichRenderObject] = []
     public private(set) var dirtyState: RichRenderDirtyState = .all
 
-    fileprivate var layoutFingerprint: Int
-    fileprivate var displayFingerprint: Int
 
     fileprivate init(element: RichElement) {
         id = element.id
         self.element = element
-        layoutFingerprint = Self.makeLayoutFingerprint(element)
-        displayFingerprint = Self.makeDisplayFingerprint(element)
     }
 
     public func markClean() {
@@ -36,13 +32,10 @@ open class RichRenderObject: @unchecked Sendable {
     }
 
     fileprivate func reconcile(with newElement: RichElement) {
-        let newLayoutFingerprint = Self.makeLayoutFingerprint(newElement)
-        let newDisplayFingerprint = Self.makeDisplayFingerprint(newElement)
-        if layoutFingerprint != newLayoutFingerprint { dirtyState.insert(.layout) }
-        if displayFingerprint != newDisplayFingerprint { dirtyState.insert(.display) }
+        guard element !== newElement else { return }
+        // Built-in rendering reuses equal elements. Rebuilt/custom elements are conservatively dirty.
+        dirtyState.formUnion(.all)
         element = newElement
-        layoutFingerprint = newLayoutFingerprint
-        displayFingerprint = newDisplayFingerprint
 
         var existingByID = Dictionary(uniqueKeysWithValues: children.map { ($0.id, $0) })
         let reconciledChildren = newElement.children.map { childElement -> RichRenderObject in
@@ -76,72 +69,7 @@ open class RichRenderObject: @unchecked Sendable {
         return object
     }
 
-    private static func makeLayoutFingerprint(_ element: RichElement) -> Int {
-        var hasher = Hasher()
-        hasher.combine(element.id)
-        hasher.combine(ObjectIdentifier(type(of: element)))
-        hasher.combine(element.revision.layout)
-        hasher.combine(element.display == .block)
-        switch element {
-        case let container as RichContainerElement:
-            hasher.combine(container.spacing)
-            hasher.combine(container.contentInsets)
-            hasher.combine(container.children.map(\.id))
-        case let badge as RichTextBadgeElement:
-            hasher.combine(badge.attributedText.richViewFingerprint)
-            hasher.combine(badge.contentInsets.top)
-            hasher.combine(badge.contentInsets.left)
-            hasher.combine(badge.contentInsets.bottom)
-            hasher.combine(badge.contentInsets.right)
-            hasher.combine(badge.outerInsets.top)
-            hasher.combine(badge.outerInsets.left)
-            hasher.combine(badge.outerInsets.bottom)
-            hasher.combine(badge.outerInsets.right)
-            hasher.combine(badge.cornerRadius)
-            hasher.combine(badge.borderWidth)
-            hasher.combine(badge.baselineOffset)
-            hasher.combine(badge.actionIdentifier)
-        case let text as RichTextElement:
-            hasher.combine(text.attributedText.richViewFingerprint)
-            hasher.combine(text.maximumNumberOfLines)
-            hasher.combine(text.lineBreakMode.rawValue)
-        case let image as RichImageElement:
-            hasher.combine(image.size.width)
-            hasher.combine(image.size.height)
-            hasher.combine(image.contentInsets.top)
-            hasher.combine(image.contentInsets.left)
-            hasher.combine(image.contentInsets.bottom)
-            hasher.combine(image.contentInsets.right)
-            hasher.combine(image.font.pointSize)
-        case let attachment as RichAttachmentElement:
-            hasher.combine(attachment.metrics.occupiedSize.width)
-            hasher.combine(attachment.metrics.occupiedSize.height)
-            hasher.combine(attachment.reuseIdentifier)
-        case let lineBreak as RichBreakElement:
-            hasher.combine(lineBreak.extent)
-        default:
-            break
-        }
-        return hasher.finalize()
-    }
 
-    private static func makeDisplayFingerprint(_ element: RichElement) -> Int {
-        var hasher = Hasher()
-        hasher.combine(element.revision.display)
-        switch element {
-        case let badge as RichTextBadgeElement:
-            hasher.combine(badge.attributedText.richViewFingerprint)
-            hasher.combine(badge.borderColor?.hash ?? 0)
-        case let text as RichTextElement: hasher.combine(text.attributedText.richViewFingerprint)
-        case let image as RichImageElement:
-            hasher.combine(image.source.identifier)
-            hasher.combine(image.tintColor?.hash ?? 0)
-        case let attachment as RichAttachmentElement:
-            hasher.combine(ObjectIdentifier(attachment.provider))
-        default: break
-        }
-        return hasher.finalize()
-    }
 }
 
 public final class RichRenderContainer: RichRenderObject, @unchecked Sendable {}

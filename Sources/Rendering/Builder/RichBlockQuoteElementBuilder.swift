@@ -1,5 +1,6 @@
 
 public final class RichBlockQuoteElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.blockQuote
     public init() {}
 

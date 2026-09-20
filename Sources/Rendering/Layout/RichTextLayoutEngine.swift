@@ -219,6 +219,8 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
         switch element {
         case let container as RichContainerElement:
             layoutContainer(container, state: &state, isRoot: false)
+        case let latex as RichLatexElement:
+            state.appendTextBlock(makeInlineContent(from: latex.fitting(width: state.width)), spacing: 0, using: self)
         case let text as RichTextElement:
             state.appendTextBlock(makeInlineContent(from: text), spacing: 0, using: self)
         case let image as RichImageElement:
@@ -349,7 +351,6 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
 
         mutating func append(_ element: RichElement) {
             hasher.combine(element.id)
-            hasher.combine(element.revision.layout)
             switch element {
             case let badge as RichTextBadgeElement:
                 let attachment = RichInlineRunFactory.textBadge(

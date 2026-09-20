@@ -10,7 +10,7 @@ final class RichElementSnapshotTests: XCTestCase {
             children: [first, second]
         ))
 
-        let updatedFirst = text(id: "first", value: "AA", layoutRevision: 1)
+        let updatedFirst = text(id: "first", value: "AA")
         let updated = snapshot.applying([.update(updatedFirst)])
 
         XCTAssertTrue(updated.root.children[0] === updatedFirst)
@@ -47,7 +47,7 @@ final class RichElementSnapshotTests: XCTestCase {
         let originalFirst = tree.root.children[0]
         let originalSecond = tree.root.children[1]
 
-        let updated = initial.applying([.update(text(id: "first", value: "AA", layoutRevision: 1))])
+        let updated = initial.applying([.update(text(id: "first", value: "AA"))])
         tree.reconcile(snapshot: updated)
 
         XCTAssertTrue(tree.root.children[0] === originalFirst)
@@ -56,11 +56,10 @@ final class RichElementSnapshotTests: XCTestCase {
         XCTAssertTrue(tree.root.children[1].dirtyState.isEmpty)
     }
 
-    private func text(id: String, value: String, layoutRevision: Int = 0) -> RichTextElement {
+    private func text(id: String, value: String) -> RichTextElement {
         RichTextElement(
             id: id,
-            attributedText: NSAttributedString(string: value),
-            revision: RichElementRevision(layout: layoutRevision, display: 0)
+            attributedText: NSAttributedString(string: value)
         )
     }
 }

@@ -704,11 +704,13 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         scheduleLayout(for: makeDocumentSnapshot(documentContent, constrainedWidth: bounds.width))
     }
 
+    private let documentRenderer = RichContentRenderer()
+
     private func makeDocumentSnapshot(
         _ content: DocumentContent,
         constrainedWidth: CGFloat
     ) -> RichElementSnapshot {
-        RichContentRenderer().render(
+        documentRenderer.render(
             document: content.document,
             constrainedWidth: constrainedWidth,
             configuration: content.configuration,

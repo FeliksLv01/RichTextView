@@ -1,6 +1,7 @@
 import UIKit
 
 public final class RichMentionElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.mention
     public init() {}
 

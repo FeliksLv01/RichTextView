@@ -1,32 +1,18 @@
 import Foundation
 
-public struct RichContentRevision: Hashable, Sendable {
-    public let layout: Int
-    public let display: Int
+/// Rendering content must be an immutable value containing every field affecting output.
+public protocol RichContentNodeContent: Sendable, Equatable {}
 
-    public init(layout: Int = 0, display: Int = 0) {
-        self.layout = layout
-        self.display = display
+extension RichContentNodeContent {
+    func matches(_ other: any RichContentNodeContent) -> Bool {
+        guard let other = other as? Self else { return false }
+        return self == other
     }
-
-    public static let initial = RichContentRevision()
 }
 
-public protocol RichContentNodeContent: Sendable {}
-
-public protocol RichContentNodeContentSignatureProviding {
-    var richContentLayoutSignature: String { get }
-    var richContentDisplaySignature: String { get }
-}
-
-public extension RichContentNodeContentSignatureProviding {
-    var richContentDisplaySignature: String { richContentLayoutSignature }
-}
-
-public struct RichEmptyContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichEmptyContent: RichContentNodeContent, Equatable {
     public init() {}
 
-    public var richContentLayoutSignature: String { "empty" }
 }
 
 public struct RichContentNode: Sendable {
@@ -34,21 +20,18 @@ public struct RichContentNode: Sendable {
     public let type: RichContentNodeType
     public let content: any RichContentNodeContent
     public let children: [RichContentNode]
-    public let revision: RichContentRevision
 
     public init(
         id: String,
         type: RichContentNodeType,
         content: any RichContentNodeContent = RichEmptyContent(),
-        children: [RichContentNode] = [],
-        revision: RichContentRevision = .initial
+        children: [RichContentNode] = []
     ) {
         precondition(!id.isEmpty, "Rich content node ID must not be empty")
         self.id = id
         self.type = type
         self.content = content
         self.children = children
-        self.revision = revision
     }
 
     public func content<Content: RichContentNodeContent>(as type: Content.Type = Content.self) -> Content? {
@@ -69,14 +52,12 @@ public struct RichContentDocument: Sendable {
 
     public init(
         id: String,
-        children: [RichContentNode],
-        revision: RichContentRevision = .initial
+        children: [RichContentNode]
     ) {
         root = RichContentNode(
             id: id,
             type: .root,
-            children: children,
-            revision: revision
+            children: children
         )
     }
 
@@ -89,37 +70,32 @@ public extension RichContentNode {
     static func text(
         id: String,
         _ text: String,
-        style: RichTextStyle = RichTextStyle(),
-        revision: RichContentRevision = .initial
+        style: RichTextStyle = RichTextStyle()
     ) -> Self {
         Self(
             id: id,
             type: .text,
-            content: RichTextContent(text: text, style: style),
-            revision: revision
+            content: RichTextContent(text: text, style: style)
         )
     }
 
     static func paragraph(
         id: String,
-        children: [RichContentNode],
-        revision: RichContentRevision = .initial
+        children: [RichContentNode]
     ) -> Self {
-        Self(id: id, type: .paragraph, children: children, revision: revision)
+        Self(id: id, type: .paragraph, children: children)
     }
 
     static func paragraph(
         id: String,
         text: String,
-        style: RichTextStyle = RichTextStyle(),
-        revision: RichContentRevision = .initial
+        style: RichTextStyle = RichTextStyle()
     ) -> Self {
         paragraph(
             id: id,
             children: [
-                .text(id: "\(id).text", text, style: style, revision: revision)
-            ],
-            revision: revision
+                .text(id: "\(id).text", text, style: style)
+            ]
         )
     }
 

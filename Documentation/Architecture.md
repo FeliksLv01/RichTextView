@@ -55,19 +55,17 @@ node type when a product needs different presentation.
 ## Core model
 
 `RichContentDocument` is the semantic representation. Nodes have stable IDs,
-typed content, children, and revisions. The model has no UIKit dependency and is
+typed equatable content and children. The model has no UIKit dependency and is
 safe to prepare away from the main thread.
 
-`RichContentDocumentReconciler` preserves stable node identity between document
-versions. `RichContentDocumentRevealProjector` creates a visible projection for
+`RichContentDocumentRevealProjector` creates a visible projection for
 progressive rendering without mutating the source document.
 
 ## Input adapters
 
 An input adapter converts source data into `RichContentDocument`. Application
 models, server schemas, attributed strings, and document formats can all share
-the renderer once they produce stable node IDs, typed content, children, and
-revisions.
+the renderer once they produce stable node IDs, typed equatable content and children.
 
 ### Markdown
 
@@ -88,8 +86,7 @@ injected configuration and builder registry. The immutable
 `RichElementSnapshot` feeds `RichTextLayoutEngine`, which produces all text,
 decoration, image, and attachment geometry before views are created.
 
-Text is measured and drawn with CoreText. Stable element IDs and separate
-layout/display revisions allow unchanged render objects and cached text layouts
+Text is measured and drawn with CoreText. Stable element IDs and content equality allow unchanged render objects and cached text layouts
 to be reused across updates.
 
 Tables are built-in block attachments with a horizontal `UIScrollView`. Each
@@ -99,9 +96,10 @@ attachment keeps stable identity across streaming updates. Table colors,
 padding, borders, column bounds, and row height are supplied by
 `RichTableStyle`.
 
-For streaming input, callers feed the preceding document into the next parser
-pass. Reconciliation preserves node lineage and increments only affected
-revisions; the layout cache then reuses unchanged attributed runs. The view
+For streaming input, callers retain a renderer per document. The parser still
+parses the full source; the renderer compares immutable content and extension
+inputs before constructing elements. Width, traits and configuration changes
+invalidate reuse. Math measurement uses a bounded cache. The view
 guards asynchronous layouts and display jobs with generations so stale work
 cannot publish over newer content, and retains the previous bitmap while a new
 asynchronous display is pending. Message lifecycle, stream-part merging, and

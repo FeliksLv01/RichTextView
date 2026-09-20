@@ -1,6 +1,6 @@
 import UIKit
 
-public struct RichContentLayoutMetrics: Sendable {
+public struct RichContentLayoutMetrics: Equatable, Sendable {
     public let blockSpacing: CGFloat
     public let listIndent: CGFloat
     public let blockQuoteIndicatorWidth: CGFloat
@@ -19,7 +19,7 @@ public struct RichContentLayoutMetrics: Sendable {
     }
 }
 
-public struct RichContentResolvedLink: Sendable {
+public struct RichContentResolvedLink: Equatable, Sendable {
     public let title: String?
     public let icon: String?
 
@@ -29,7 +29,7 @@ public struct RichContentResolvedLink: Sendable {
     }
 }
 
-public struct RichTableStyle: @unchecked Sendable {
+public struct RichTableStyle: Equatable, @unchecked Sendable {
     public let cellInsets: UIEdgeInsets
     public let minimumColumnWidth: CGFloat
     public let maximumColumnWidth: CGFloat
@@ -123,6 +123,9 @@ public struct RichCodeBlockPresentation {
 }
 
 public protocol RichContentPresentationResolving: AnyObject {
+    /// Immutable value containing every external input used by presentation methods.
+    associatedtype Inputs: Hashable
+    var inputs: Inputs { get }
     func overrideElement(for node: RichContentNode, context: RichContentRenderContext) -> RichElement?
     func mentionPresentation(for node: RichContentNode, content: RichMentionContent) -> RichMentionPresentation?
     func emojiPresentation(for node: RichContentNode, content: RichEmojiContent) -> RichInlineImagePresentation?
@@ -285,6 +288,7 @@ public struct RichContentRenderingConfiguration {
 }
 
 public struct RichContentRenderContext {
+    public let streaming: Bool
     public let constrainedWidth: CGFloat
     public let configuration: RichContentRenderingConfiguration
     public let resolver: (any RichContentPresentationResolving)?
@@ -294,8 +298,10 @@ public struct RichContentRenderContext {
     public init(
         constrainedWidth: CGFloat,
         configuration: RichContentRenderingConfiguration,
-        resolver: (any RichContentPresentationResolving)? = nil
+        resolver: (any RichContentPresentationResolving)? = nil,
+        streaming: Bool = false
     ) {
+        self.streaming = streaming
         self.constrainedWidth = constrainedWidth
         self.configuration = configuration
         self.resolver = resolver
@@ -307,13 +313,55 @@ public struct RichContentRenderContext {
         constrainedWidth: CGFloat,
         configuration: RichContentRenderingConfiguration,
         resolver: (any RichContentPresentationResolving)?,
+        streaming: Bool,
         needsLeadingInlineSpacing: Bool,
         needsTrailingInlineSpacing: Bool
     ) {
+        self.streaming = streaming
         self.constrainedWidth = constrainedWidth
         self.configuration = configuration
         self.resolver = resolver
         self.needsLeadingInlineSpacing = needsLeadingInlineSpacing
         self.needsTrailingInlineSpacing = needsTrailingInlineSpacing
+    }
+}
+
+extension RichContentRenderingConfiguration {
+    func matchesForReuse(_ other: Self) -> Bool {
+        guard textForegroundColorResolver == nil, other.textForegroundColorResolver == nil,
+              leadingElements.isEmpty, other.leadingElements.isEmpty else { return false }
+        return font == other.font
+            && lineHeight == other.lineHeight
+            && textColor == other.textColor
+            && secondaryTextColor == other.secondaryTextColor
+            && linkColor == other.linkColor
+            && currentMentionTextColor == other.currentMentionTextColor
+            && currentMentionBackgroundColor == other.currentMentionBackgroundColor
+            && mentionSpacing == other.mentionSpacing
+            && contrastBackgroundColor == other.contrastBackgroundColor
+            && blockQuoteColor == other.blockQuoteColor
+            && codeBackgroundColor == other.codeBackgroundColor
+            && inlineCodeFont == other.inlineCodeFont
+            && inlineCodeInsets == other.inlineCodeInsets
+            && inlineCodeCornerRadius == other.inlineCodeCornerRadius
+            && inlineCodeBorderColor == other.inlineCodeBorderColor
+            && inlineCodeBorderWidth == other.inlineCodeBorderWidth
+            && inlineCodeBaselineOffset == other.inlineCodeBaselineOffset
+            && codeBlockTextColor == other.codeBlockTextColor
+            && codeBlockBackgroundColor == other.codeBlockBackgroundColor
+            && codeBlockInsets == other.codeBlockInsets
+            && codeBlockCornerRadius == other.codeBlockCornerRadius
+            && tableStyle == other.tableStyle
+            && dividerColor == other.dividerColor
+            && dividerHeight == other.dividerHeight
+            && dividerExtent == other.dividerExtent
+            && highlightTextColor == other.highlightTextColor
+            && highlightBackgroundColor == other.highlightBackgroundColor
+            && highlightedMentionIDs == other.highlightedMentionIDs
+            && highlightTokens == other.highlightTokens
+            && resolvedLinks == other.resolvedLinks
+            && excludedNodeIDs == other.excludedNodeIDs
+            && metrics == other.metrics
+            && commandTextColor == other.commandTextColor
     }
 }

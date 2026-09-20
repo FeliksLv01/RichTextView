@@ -1,6 +1,7 @@
 import UIKit
 
 public final class RichTextElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.text
     public init() {}
 
@@ -39,14 +40,12 @@ public final class RichTextElementBuilder: RichContentElementBuilding {
                 borderColor: context.configuration.inlineCodeBorderColor,
                 borderWidth: context.configuration.inlineCodeBorderWidth,
                 baselineOffset: context.configuration.inlineCodeBaselineOffset,
-                actionIdentifier: "",
-                revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
+                actionIdentifier: ""
             )
         }
         return RichTextElement(
             id: node.id,
-            attributedText: text,
-            revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
+            attributedText: text
         )
     }
 

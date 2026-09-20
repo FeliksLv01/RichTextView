@@ -123,8 +123,7 @@ public final class RichImageElement: RichElement, RichActionElement, @unchecked 
         copyText: String? = nil,
         accessibilityLabel: String? = nil,
         actionIdentifier: String = "",
-        display: RichElementDisplay = .inline,
-        revision: RichElementRevision = .initial
+        display: RichElementDisplay = .inline
     ) {
         self.source = source
         self.size = size
@@ -135,6 +134,6 @@ public final class RichImageElement: RichElement, RichActionElement, @unchecked 
         self.copyText = copyText
         self.accessibilityLabel = accessibilityLabel
         self.actionIdentifier = actionIdentifier
-        super.init(id: id, revision: revision, display: display)
+        super.init(id: id, display: display)
     }
 }

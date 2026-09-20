@@ -2,16 +2,18 @@ import RichTextView
 import RichTextViewMarkdown
 import UIKit
 
-enum ExampleCase: CaseIterable {
+enum ExampleCase: String, CaseIterable {
     case string
     case attributedImageMix
     case nodeTree
     case table
     case markdownSelection
+    case math
     case markdownStreaming
 
     var title: String {
         switch self {
+        case .math: "LaTeX formulas"
         case .string: "String and actions"
         case .attributedImageMix: "Attributed image and text"
         case .nodeTree: "Complex unified node tree"
@@ -23,17 +25,20 @@ enum ExampleCase: CaseIterable {
 
     var summary: String {
         switch self {
+        case .math: "Inline math, fractions, cases, matrices, and boxed answers"
         case .string: "Multiline text, truncation, and tappable ranges"
         case .attributedImageMix: "Styled runs and inline images in NSAttributedString"
         case .nodeTree: "Heading, mention, link, image, quote, list, and emoji"
         case .table: "Rich cells, column alignment, selection, and horizontal scrolling"
         case .markdownSelection: "Rich Markdown normalized into selectable nodes"
-        case .markdownStreaming: "Incremental parsing, reconciliation, and flicker-free updates"
+        case .markdownStreaming: "Partial Markdown, stable elements, and progressive formulas"
         }
     }
 
     var note: String {
         switch self {
+        case .math:
+            "Native formula drawing with selection and copy. Tap Replay to watch partially received formulas grow."
         case .string:
             "A lightweight entry point that still uses the same layout and drawing engine."
         case .attributedImageMix:
@@ -45,7 +50,7 @@ enum ExampleCase: CaseIterable {
         case .markdownSelection:
             "Text selection is enabled. Long-press, adjust the handles if needed, then use the anchored Copy menu."
         case .markdownStreaming:
-            "Incoming Markdown arrives in chunks while the typewriter advances every 30 ms, matching REDoc's native default. Stable nodes and the previous bitmap remain visible across updates."
+            "One character arrives every 20 ms. Unchanged elements are reused; incomplete formulas use a temporary preview."
         }
     }
 
@@ -60,6 +65,9 @@ enum ExampleCase: CaseIterable {
         resolver: any RichContentPresentationResolving
     ) {
         switch self {
+        case .math:
+            let parsed = RichMarkdownParser(imageSize: CGSize(width: 24, height: 24)).parse(Self.mathMarkdown, documentID: "math-example")
+            apply(document: parsed.document, to: richTextView, constrainedWidth: constrainedWidth, resolver: resolver)
         case .string:
             applyString(to: richTextView)
         case .attributedImageMix:
@@ -177,6 +185,31 @@ enum ExampleCase: CaseIterable {
             accessibilityLabel: label
         )
     }
+
+    static let mathMarkdown = #"""
+    ## Inline math
+    Energy \(E = mc^2\) and the identity \(e^{i\pi}+1=0\) share the text baseline.
+
+    ## Fractions & roots
+    $$
+    x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+    $$
+
+    ## Piecewise functions
+    $$
+    f(n) = \begin{cases} 0, & \text{odd} \\ n, & \text{even} \end{cases}
+    $$
+
+    ## Matrices
+    $$
+    A = \begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}
+    $$
+
+    ## Boxed answers
+    $$
+    \boxed{\text{答案：} \sum_{k=1}^{n} k = \frac{n(n+1)}{2}}
+    $$
+    """#
 
     private static let nodeTreeDocument = RichContentDocument(
         root: RichContentNode(
@@ -345,7 +378,7 @@ enum ExampleCase: CaseIterable {
 
     private static let remoteImageURL = "https://github.githubassets.com/images/modules/logos_page/GitHub-Logo.png"
 
-    private static var renderingConfiguration: RichContentRenderingConfiguration {
+    static var renderingConfiguration: RichContentRenderingConfiguration {
         let font = UIFont.preferredFont(forTextStyle: .body)
         return RichContentRenderingConfiguration(
             font: font,
@@ -370,6 +403,7 @@ enum ExampleCase: CaseIterable {
 }
 
 final class ExampleContentResolver: RichContentPresentationResolving {
+    let inputs = false
     func imageSource(
         for node: RichContentNode,
         content: RichImageContent

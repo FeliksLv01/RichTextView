@@ -1,6 +1,7 @@
 import UIKit
 
 public final class RichLinkElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.link
     public init() {}
 

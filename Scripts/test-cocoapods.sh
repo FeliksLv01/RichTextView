@@ -44,7 +44,7 @@ prepare_binary \
 prepare_binary \
   'iosMath.xcframework' \
   "$BINARY_ROOT/Components/Math" \
-  'https://github.com/FeliksLv01/RichTextViewBinaries/releases/download/iosMath-2.5.0.1/iosMath.xcframework.zip'
+  'https://github.com/FeliksLv01/RichTextViewBinaries/releases/download/iosMath-2.5.0.2/iosMath.xcframework.zip'
 
 ruby -e 'require "cocoapods"; Pod::Command.plugin_prefixes = []; Pod::Command.run(ARGV)' -- \
   lib lint "$ROOT_DIR/RichTextView.podspec" \

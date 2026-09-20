@@ -4,19 +4,19 @@ final class RichTableSectionElement: RichElement, @unchecked Sendable {
     let isHeader: Bool
     let rows: [RichTableRowElement]
 
-    init(id: String, isHeader: Bool, rows: [RichTableRowElement], revision: RichElementRevision) {
+    init(id: String, isHeader: Bool, rows: [RichTableRowElement]) {
         self.isHeader = isHeader
         self.rows = rows
-        super.init(id: id, revision: revision, display: .block)
+        super.init(id: id, display: .block)
     }
 }
 
 final class RichTableRowElement: RichElement, @unchecked Sendable {
     let cells: [RichTableCellElement]
 
-    init(id: String, cells: [RichTableCellElement], revision: RichElementRevision) {
+    init(id: String, cells: [RichTableCellElement]) {
         self.cells = cells
-        super.init(id: id, revision: revision, display: .block)
+        super.init(id: id, display: .block)
     }
 }
 
@@ -28,16 +28,16 @@ final class RichTableCellElement: RichElement, @unchecked Sendable {
     init(
         id: String,
         alignment: RichTableCellAlignment,
-        children: [RichElement],
-        revision: RichElementRevision
+        children: [RichElement]
     ) {
         self.alignment = alignment
         storedChildren = children
-        super.init(id: id, revision: revision, display: .block)
+        super.init(id: id, display: .block)
     }
 }
 
 public final class RichTableElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.table
     public init() {}
 
@@ -65,16 +65,13 @@ public final class RichTableElementBuilder: RichContentElementBuilding {
             provider: RichTableViewProvider(model: model),
             copyText: model.copyText,
             isSelectable: true,
-            display: .block,
-            revision: RichElementRevision(
-                layout: node.revision.layout,
-                display: node.revision.display
-            )
+            display: .block
         )
     }
 }
 
 public final class RichTableHeadElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.tableHead
     public init() {}
 
@@ -88,20 +85,19 @@ public final class RichTableHeadElementBuilder: RichContentElementBuilding {
         if rows.isEmpty, !directCells.isEmpty {
             rows = [RichTableRowElement(
                 id: "\(node.id)/row",
-                cells: directCells,
-                revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
+                cells: directCells
             )]
         }
         return RichTableSectionElement(
             id: node.id,
             isHeader: true,
-            rows: rows,
-            revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
+            rows: rows
         )
     }
 }
 
 public final class RichTableBodyElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.tableBody
     public init() {}
 
@@ -113,13 +109,13 @@ public final class RichTableBodyElementBuilder: RichContentElementBuilding {
         RichTableSectionElement(
             id: node.id,
             isHeader: false,
-            rows: children.compactMap { $0 as? RichTableRowElement },
-            revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
+            rows: children.compactMap { $0 as? RichTableRowElement }
         )
     }
 }
 
 public final class RichTableRowElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.tableRow
     public init() {}
 
@@ -130,13 +126,13 @@ public final class RichTableRowElementBuilder: RichContentElementBuilding {
     ) -> RichElement? {
         RichTableRowElement(
             id: node.id,
-            cells: children.compactMap { $0 as? RichTableCellElement },
-            revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
+            cells: children.compactMap { $0 as? RichTableCellElement }
         )
     }
 }
 
 public final class RichTableCellElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.tableCell
     public init() {}
 
@@ -148,8 +144,7 @@ public final class RichTableCellElementBuilder: RichContentElementBuilding {
         RichTableCellElement(
             id: node.id,
             alignment: node.content(as: RichTableCellContent.self)?.alignment ?? .natural,
-            children: children,
-            revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
+            children: children
         )
     }
 }

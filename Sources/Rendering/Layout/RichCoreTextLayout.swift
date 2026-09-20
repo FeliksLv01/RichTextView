@@ -151,6 +151,7 @@ final class RichCoreTextLayout: @unchecked Sendable {
             context.textPosition = line.coreTextOrigin
             CTLineDraw(line.line, context)
         }
+        drawLatex(in: context, isCancelled: isCancelled)
         drawInlineTextBadges(in: context, isCancelled: isCancelled)
         drawInlineImages(in: context, imageResolver: imageResolver, isCancelled: isCancelled)
         context.restoreGState()
@@ -386,6 +387,20 @@ final class RichCoreTextLayout: @unchecked Sendable {
                     tintColor: attachment.tintColor,
                     context: context
                 )
+            }
+        }
+    }
+
+    private func drawLatex(in context: CGContext, isCancelled: () -> Bool) {
+        for line in lines {
+            guard !isCancelled() else { return }
+            for run in CTLineGetGlyphRuns(line.line) as? [CTRun] ?? [] {
+                guard let latex = (CTRunGetAttributes(run) as NSDictionary)[RichLatexRun.attribute] as? RichLatexRun else { continue }
+                let range = CTRunGetStringRange(run)
+                let x = line.coreTextOrigin.x + CGFloat(CTLineGetOffsetForStringIndex(line.line, range.location, nil))
+                let rect = CGRect(x: x, y: line.coreTextOrigin.y - latex.descent, width: latex.width, height: latex.ascent + latex.descent)
+                guard rect.intersects(context.boundingBoxOfClipPath) else { continue }
+                latex.draw(in: context, baseline: CGPoint(x: x, y: line.coreTextOrigin.y))
             }
         }
     }

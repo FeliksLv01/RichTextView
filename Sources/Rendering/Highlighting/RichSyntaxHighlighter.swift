@@ -1,12 +1,13 @@
 import Foundation
 internal import SwiftTreeSitter
 internal import TreeSitterSwift
+import OSLog
 import UIKit
 
 final class RichSyntaxHighlighter: @unchecked Sendable {
+    private static let performanceLogger = Logger(subsystem: "com.felikslv.Nook", category: "markdown-performance")
     private final class State {
         let parser: Parser
-        let query: Query
         var previousSource = ""
         var previousTree: MutableTree?
         var lastAccess: UInt64 = 0
@@ -15,28 +16,35 @@ final class RichSyntaxHighlighter: @unchecked Sendable {
             let parser = Parser()
             try parser.setLanguage(language)
             self.parser = parser
-            query = try Query(language: language, data: RichSwiftHighlightQuery.data)
         }
     }
 
     private let queue = DispatchQueue(label: "io.github.felikslv01.rich-text-view.syntax-highlighter")
     private let language: Language
+    private let query: Query?
     private let maximumCachedCodeBlocks: Int
     private var states: [String: State] = [:]
     private var accessCounter: UInt64 = 0
 
     init(maximumCachedCodeBlocks: Int) {
         language = Language(tree_sitter_swift())
+        query = try? Query(language: language, data: RichSwiftHighlightQuery.data)
         self.maximumCachedCodeBlocks = max(1, maximumCachedCodeBlocks)
     }
 
     func highlight(code: String, language: String, nodeID: String, theme: RichCodeHighlightTheme) -> NSAttributedString? {
         guard Self.isSwift(language) else { return nil }
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        defer {
+            Self.performanceLogger.debug(
+                "code.highlight count=\(code.count, privacy: .public) durationMS=\(Double(DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000, format: .fixed(precision: 2), privacy: .public)"
+            )
+        }
         return queue.sync {
-            guard let state = state(for: nodeID), let tree = updatedTree(for: code, state: state),
+            guard let query, let state = state(for: nodeID), let tree = updatedTree(for: code, state: state),
                   let root = tree.rootNode else { return nil }
             let value = baseAttributedString(code: code, theme: theme)
-            let highlights = state.query.execute(node: root, in: tree)
+            let highlights = query.execute(node: root, in: tree)
                 .resolve(with: Predicate.Context(string: code))
                 .highlights()
             for highlight in highlights where NSMaxRange(highlight.range) <= value.length {

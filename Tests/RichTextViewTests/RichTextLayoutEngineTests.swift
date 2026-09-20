@@ -233,10 +233,10 @@ final class RichTextLayoutEngineTests: XCTestCase {
         XCTAssertEqual(runBox.contentFrame.size, CGSize(width: 276, height: 120))
     }
 
-    func testDisplayOnlyRevisionKeepsGeometry() {
+    func testColorChangeKeepsGeometry() {
         let engine = RichTextLayoutEngine()
-        let first = snapshot(displayRevision: 0)
-        let second = snapshot(displayRevision: 1)
+        let first = snapshot(color: .red)
+        let second = snapshot(color: .blue)
 
         let firstLayout = engine.layout(
             snapshot: first,
@@ -519,14 +519,13 @@ final class RichTextLayoutEngineTests: XCTestCase {
         XCTAssertNotNil(layout.textRunBoxes.first?.layout.inlineRunRect(at: 6))
     }
 
-    private func snapshot(displayRevision: Int) -> RichElementSnapshot {
+    private func snapshot(color: UIColor) -> RichElementSnapshot {
         let text = RichTextElement(
             id: "text",
             attributedText: NSAttributedString(
                 string: "Stable layout",
-                attributes: [.font: UIFont.systemFont(ofSize: 16)]
-            ),
-            revision: RichElementRevision(layout: 0, display: displayRevision)
+                attributes: [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: color]
+            )
         )
         return RichElementSnapshot(root: RichContainerElement(id: "root", children: [text]))
     }

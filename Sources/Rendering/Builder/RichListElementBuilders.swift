@@ -1,6 +1,7 @@
 import UIKit
 
 public final class RichNumberedListElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.numberedList
     public init() {}
 
@@ -44,6 +45,7 @@ public final class RichNumberedListElementBuilder: RichContentElementBuilding {
 }
 
 public final class RichBulletedListElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.bulletedList
     public init() {}
 

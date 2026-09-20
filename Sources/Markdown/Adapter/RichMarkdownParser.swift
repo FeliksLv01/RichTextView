@@ -49,7 +49,7 @@ public struct RichMarkdownParser {
         let nodes = convert(markup, context: context)
         let root = nodes.first(where: { $0.type == .root })
             ?? RichContentNode(id: documentID, type: .root, children: nodes)
-        let document = RichContentDocumentReconciler.reconcile(RichContentDocument(root: root), with: previousDocument)
+        let document = RichContentDocument(root: root)
         return RichMarkdownParseResult(
             document: document,
             plainText: document.plainText,

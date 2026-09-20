@@ -10,7 +10,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     ) {
         guard let windowScene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: windowScene)
-        window.rootViewController = UINavigationController(rootViewController: ExampleListViewController())
+        let navigation = UINavigationController(rootViewController: ExampleListViewController())
+        window.rootViewController = navigation
+        if let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--example=") }),
+           let example = ExampleCase(rawValue: String(argument.dropFirst("--example=".count))) {
+            navigation.pushViewController(ExampleDetailViewController(example: example), animated: false)
+        }
         window.makeKeyAndVisible()
         self.window = window
     }

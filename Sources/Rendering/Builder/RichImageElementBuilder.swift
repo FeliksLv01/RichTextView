@@ -1,6 +1,7 @@
 import UIKit
 
 public final class RichImageElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.image
 
     public init() {}

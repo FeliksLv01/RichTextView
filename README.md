@@ -3,7 +3,7 @@
 `RichTextView` is a unified rich-text node-tree renderer for UIKit, built on
 CoreText. Applications describe content with an immutable
 `RichContentDocument`, then use the same rendering pipeline for text, links,
-mentions, images, attachments, lists, quotes, code, and custom node types.
+mentions, images, attachments, lists, quotes, code, LaTeX formulas, and custom node types.
 
 Markdown is one built-in input adapter. It converts a Markdown AST into the
 same node tree; it is not the renderer's underlying data model.
@@ -16,8 +16,8 @@ networking, or image-cache dependencies.
 <table>
   <tr>
     <td align="center"><img src="Documentation/Images/example-node-tree.png" width="240" alt="Unified node tree"><br><sub>Unified node tree</sub></td>
-    <td align="center"><img src="Documentation/Images/example-markdown.png" width="240" alt="Markdown and highlighted code block"><br><sub>Markdown and highlighted code block</sub></td>
-    <td align="center"><img src="Documentation/Images/example-selection.png" width="240" alt="Text selection and copy menu"><br><sub>Text selection and copy menu</sub></td>
+    <td align="center"><img src="Documentation/Images/example-markdown.png" width="240" alt="Selectable Markdown and tables"><br><sub>Selectable Markdown and tables</sub></td>
+    <td align="center"><img src="Documentation/Images/example-math.png" width="240" alt="Native LaTeX formulas"><br><sub>Native LaTeX formulas</sub></td>
   </tr>
 </table>
 
@@ -49,20 +49,18 @@ import RichTextViewMarkdown
 ## CocoaPods
 
 ```ruby
-pod 'RichTextView', '0.1.0'
+pod 'RichTextView', '0.1.1'
 ```
 
 Add the Markdown input adapter only when needed:
 
 ```ruby
-pod 'RichTextView/Markdown', '0.1.0'
+pod 'RichTextView/Markdown', '0.1.1'
 ```
 
-The adapter uses the static `Markdown.xcframework` published by
-[`swift-markdown-xcframework`](https://github.com/FeliksLv01/swift-markdown-xcframework).
-The core product consumes pinned static Tree-sitter XCFrameworks from
-[`RichTextViewTreeSitter`](https://github.com/FeliksLv01/RichTextViewTreeSitter);
-consumers do not compile or clone Tree-sitter source code.
+The parser, syntax highlighting, and math renderer consume pinned static
+XCFrameworks from [RichTextViewBinaries](https://github.com/FeliksLv01/RichTextViewBinaries).
+Math fonts are embedded in the binary; consumers do not need a separate font bundle.
 
 ## Render a node tree
 
@@ -147,6 +145,54 @@ code, styled text, and future custom inline nodes can be mixed inside a cell.
 The built-in `RichTableStyle` follows the Example/REDoc visual baseline and can
 be replaced through `RichContentRenderingConfiguration.tableStyle`.
 
+## LaTeX formulas
+
+The Markdown adapter recognizes inline `\(…\)` and display `$$…$$` / `\[…\]` math.
+Formulas become `RichLatexElement` nodes: iosMath performs mathematical typesetting,
+and the CoreText drawing pipeline draws the result without a UILabel per formula.
+Inline formulas follow the text baseline; display formulas are centered within the
+available width. Selection copies their LaTeX source.
+
+```swift
+let markdown = #"""
+Energy \(E = mc^2\).
+
+$$
+\boxed{\frac{-b \pm \sqrt{b^2 - 4ac}}{2a}}
+$$
+"""#
+let parsed = RichMarkdownParser(imageSize: CGSize(width: 24, height: 24)).parse(markdown, documentID: "math")
+richTextView.setContent(parsed.document)
+```
+
+Fractions, roots, matrices, piecewise `cases`, nested `\boxed{…}`, and Unicode
+text inside `\text{…}` are supported by the bundled iosMath binary. This is a
+math-mode subset of LaTeX, not a full TeX engine.
+
+For streaming, retain the renderer and layout engine across updates and set
+`streaming: true` on both parsing and rendering. Use `false` for the final update:
+
+```swift
+let parser = RichMarkdownParser(imageSize: CGSize(width: 24, height: 24))
+let renderer = RichContentRenderer()
+let engine = RichTextLayoutEngine()
+
+func update(source: String, width: CGFloat, isComplete: Bool) {
+    let document = parser.parse(source, documentID: "math", streaming: !isComplete).document
+    let snapshot = renderer.render(document: document, constrainedWidth: width,
+        configuration: .standard, streaming: !isComplete).snapshot
+    let layout = engine.layout(snapshot: snapshot,
+        constrainedTo: CGSize(width: width, height: .greatestFiniteMagnitude))
+    richTextView.apply(snapshot, layout: layout)
+}
+```
+
+During streaming, a display-only preview closes unfinished groups and environments
+so complete rows can appear before `\end{cases}` arrives. If the preview still
+cannot be parsed, the preceding valid formula remains visible. The original
+source is unchanged, and final invalid input falls back to readable source.
+See **LaTeX formulas → Replay** in the Example app for a 20 ms character stream.
+
 ## Custom nodes
 
 `RichContentNodeType` is open-ended. A host can define a semantic node type and
@@ -162,23 +208,17 @@ let registry = RichContentElementBuilderRegistry.standard
 let renderer = RichContentRenderer(registry: registry)
 ```
 
-Use stable node IDs and pass the preceding document into reconciliation during
-streaming. This lets citations or application-specific cards keep
-their render identity while only changed branches receive new revisions.
+Use stable node IDs and immutable `Equatable` node content. Reuse one
+`RichContentRenderer` per document stream. Custom builders and presentation
+resolvers must expose an `inputs` value conforming to `Hashable`, containing
+all external state that affects their output. Equality compares the values,
+not just their hashes. Stateless implementations can use `let inputs = false`.
 
 ## Streaming updates
 
-Pass the preceding document back to the Markdown parser so stable node IDs and
-layout/display revisions survive each partial source update:
-
-```swift
-let next = parser.parse(
-    partialMarkdown,
-    documentID: messageID,
-    previousDocument: previous?.document
-)
-previous = next
-```
+Each parser call parses the current source. The renderer reuses elements when
+content, children, builder/resolver inputs, width, traits and configuration
+are unchanged. No caller-managed revision or separate cache key is required.
 
 `RichTextLayoutEngine` caches unchanged text layouts, and `RichTextView`
 cancels obsolete layout work by generation. When asynchronous drawing is
@@ -199,7 +239,7 @@ history loads and completed messages.
 The [Example](Example) app uses the iOS 15 scene lifecycle and consumes this
 repository as a local Swift package. Its table-based catalog opens a detail page
 for each integration style: `String`, attributed image-text mixing, a complex
-typed node tree, a horizontally scrollable rich table, and selectable Markdown.
+typed node tree, a horizontally scrollable rich table, selectable Markdown, and native formulas with streaming replay.
 Generate and build its Xcode project with:
 
 ```bash

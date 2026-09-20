@@ -32,7 +32,7 @@ public struct RichTextStyle: Hashable, Sendable {
     }
 }
 
-public struct RichTextContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichTextContent: RichContentNodeContent, Equatable {
     public let text: String
     public let style: RichTextStyle
 
@@ -40,17 +40,9 @@ public struct RichTextContent: RichContentNodeContent, RichContentNodeContentSig
         self.text = text
         self.style = style
     }
-
-    public var richContentLayoutSignature: String {
-        "\(text)|\(style.bold)|\(style.italic)|\(style.code)|\(style.fontScale)"
-    }
-
-    public var richContentDisplaySignature: String {
-        "\(richContentLayoutSignature)|\(style.underline)|\(style.strikethrough)|\(style.foregroundColor ?? "")|\(style.backgroundColor ?? "")"
-    }
 }
 
-public struct RichMentionContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichMentionContent: RichContentNodeContent, Equatable {
     public let id: String
     public let name: String
     public let mentionType: String
@@ -60,11 +52,9 @@ public struct RichMentionContent: RichContentNodeContent, RichContentNodeContent
         self.name = name
         self.mentionType = mentionType
     }
-
-    public var richContentLayoutSignature: String { "\(id)|\(name)|\(mentionType)" }
 }
 
-public struct RichEmojiContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichEmojiContent: RichContentNodeContent, Equatable {
     public let code: String
     public let name: String
 
@@ -72,11 +62,9 @@ public struct RichEmojiContent: RichContentNodeContent, RichContentNodeContentSi
         self.code = code
         self.name = name
     }
-
-    public var richContentLayoutSignature: String { "\(code)|\(name)" }
 }
 
-public struct RichLinkContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichLinkContent: RichContentNodeContent, Equatable {
     public let href: String
     public let title: String
     public let icon: String
@@ -99,13 +87,9 @@ public struct RichLinkContent: RichContentNodeContent, RichContentNodeContentSig
         self.editStatus = editStatus
         self.viewType = viewType
     }
-
-    public var richContentLayoutSignature: String {
-        "\(href)|\(title)|\(icon)|\(linkType)|\(editStatus)|\(viewType)"
-    }
 }
 
-public struct RichCommandContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichCommandContent: RichContentNodeContent, Equatable {
     public let id: String
     public let kind: Int
     public let label: String
@@ -119,11 +103,9 @@ public struct RichCommandContent: RichContentNodeContent, RichContentNodeContent
         self.icon = icon
         self.content = content
     }
-
-    public var richContentLayoutSignature: String { "\(id)|\(kind)|\(label)|\(icon)|\(content)" }
 }
 
-public struct RichListContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichListContent: RichContentNodeContent, Equatable {
     public let level: Int
     public let index: Int?
 
@@ -131,11 +113,9 @@ public struct RichListContent: RichContentNodeContent, RichContentNodeContentSig
         self.level = max(1, level)
         self.index = index
     }
-
-    public var richContentLayoutSignature: String { "\(level)|\(index.map(String.init) ?? "")" }
 }
 
-public struct RichAttachmentContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichAttachmentContent: RichContentNodeContent, Equatable {
     public let sourceIdentifier: String
     public let width: Int
     public let height: Int
@@ -145,22 +125,17 @@ public struct RichAttachmentContent: RichContentNodeContent, RichContentNodeCont
         self.width = width
         self.height = height
     }
-
-    public var richContentLayoutSignature: String { "\(width)|\(height)" }
-    public var richContentDisplaySignature: String { "\(sourceIdentifier)|\(richContentLayoutSignature)" }
 }
 
-public struct RichUnknownContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichUnknownContent: RichContentNodeContent, Equatable {
     public let sourceType: String
 
     public init(sourceType: String) {
         self.sourceType = sourceType
     }
-
-    public var richContentLayoutSignature: String { sourceType }
 }
 
-public struct RichImageContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichImageContent: RichContentNodeContent, Equatable {
     public let source: String
     public let title: String
     public let size: CGSize
@@ -171,22 +146,17 @@ public struct RichImageContent: RichContentNodeContent, RichContentNodeContentSi
         self.title = title
         self.size = size
     }
-
-    public var richContentLayoutSignature: String { "\(title)|\(size.width)|\(size.height)" }
-    public var richContentDisplaySignature: String { "\(source)|\(title)" }
 }
 
-public struct RichCodeBlockContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichCodeBlockContent: RichContentNodeContent, Equatable {
     public let language: String
 
     public init(language: String = "") {
         self.language = language
     }
-
-    public var richContentLayoutSignature: String { language }
 }
 
-public struct RichMathContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichMathContent: RichContentNodeContent, Equatable {
     public let latex: String
     public let isBlock: Bool
 
@@ -194,8 +164,6 @@ public struct RichMathContent: RichContentNodeContent, RichContentNodeContentSig
         self.latex = latex
         self.isBlock = isBlock
     }
-
-    public var richContentLayoutSignature: String { "\(isBlock)|\(latex)" }
 }
 
 public enum RichTableCellAlignment: String, Hashable, Sendable {
@@ -205,32 +173,26 @@ public enum RichTableCellAlignment: String, Hashable, Sendable {
     case right
 }
 
-public struct RichTableCellContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichTableCellContent: RichContentNodeContent, Equatable {
     public let alignment: RichTableCellAlignment
 
     public init(alignment: RichTableCellAlignment = .natural) {
         self.alignment = alignment
     }
-
-    public var richContentLayoutSignature: String { alignment.rawValue }
 }
 
-public struct RichHeadingContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichHeadingContent: RichContentNodeContent, Equatable {
     public let level: Int
 
     public init(level: Int) {
         self.level = min(max(level, 1), 6)
     }
-
-    public var richContentLayoutSignature: String { String(level) }
 }
 
-public struct RichMarkdownLiteralContent: RichContentNodeContent, RichContentNodeContentSignatureProviding {
+public struct RichMarkdownLiteralContent: RichContentNodeContent, Equatable {
     public let literal: String
 
     public init(literal: String) {
         self.literal = literal
     }
-
-    public var richContentLayoutSignature: String { literal }
 }

@@ -1,6 +1,7 @@
 import UIKit
 
 public final class RichEmojiElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.emoji
     public init() {}
 

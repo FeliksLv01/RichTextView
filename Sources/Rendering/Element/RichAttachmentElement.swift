@@ -31,6 +31,7 @@ public struct RichAttachmentMetrics: Equatable, Sendable {
 }
 
 public protocol RichAttachmentViewProvider: AnyObject {
+    /// Creates the view. The attachment manager calls updateView once before mounting it.
     @MainActor
     func makeView() -> UIView
     @MainActor
@@ -62,8 +63,7 @@ public final class RichAttachmentElement: RichElement, @unchecked Sendable {
         copyText: String? = nil,
         accessibilityLabel: String? = nil,
         isSelectable: Bool = false,
-        display: RichElementDisplay = .block,
-        revision: RichElementRevision = .initial
+        display: RichElementDisplay = .block
     ) {
         precondition(!reuseIdentifier.isEmpty, "Attachment reuse identifier must not be empty")
         self.metrics = metrics
@@ -73,6 +73,6 @@ public final class RichAttachmentElement: RichElement, @unchecked Sendable {
         self.copyText = copyText
         self.accessibilityLabel = accessibilityLabel
         self.isSelectable = isSelectable
-        super.init(id: id, revision: revision, display: display)
+        super.init(id: id, display: display)
     }
 }

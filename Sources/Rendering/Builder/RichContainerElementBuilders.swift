@@ -2,6 +2,7 @@
 import UIKit
 
 public final class RichRootElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.root
     public init() {}
     public func build(node: RichContentNode, children: [RichElement], context: RichContentRenderContext) -> RichElement? {
@@ -10,6 +11,7 @@ public final class RichRootElementBuilder: RichContentElementBuilding {
 }
 
 public final class RichParagraphElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.paragraph
     public init() {}
     public func build(node: RichContentNode, children: [RichElement], context: RichContentRenderContext) -> RichElement? {
@@ -18,6 +20,7 @@ public final class RichParagraphElementBuilder: RichContentElementBuilding {
 }
 
 public final class RichInlineElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.inline
     public init() {}
     public func build(node: RichContentNode, children: [RichElement], context: RichContentRenderContext) -> RichElement? {
@@ -30,6 +33,7 @@ public final class RichInlineElementBuilder: RichContentElementBuilding {
 }
 
 public final class RichHeadingElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.heading
     public init() {}
     public func build(node: RichContentNode, children: [RichElement], context: RichContentRenderContext) -> RichElement? {
@@ -38,6 +42,7 @@ public final class RichHeadingElementBuilder: RichContentElementBuilding {
 }
 
 public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.codeBlock
     public init() {}
     public func build(node: RichContentNode, children: [RichElement], context: RichContentRenderContext) -> RichElement? {
@@ -83,8 +88,7 @@ public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
         )
         return RichContainerElement(
             id: node.id,
-            children: [codeElement],
-            revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
+            children: [codeElement]
         )
     }
 
@@ -119,6 +123,7 @@ public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
 }
 
 public final class RichDividerElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.divider
     public init() {}
     public func build(node: RichContentNode, children: [RichElement], context: RichContentRenderContext) -> RichElement? {
@@ -126,13 +131,13 @@ public final class RichDividerElementBuilder: RichContentElementBuilding {
             id: node.id,
             color: context.configuration.dividerColor,
             lineHeight: context.configuration.dividerHeight,
-            extent: context.configuration.dividerExtent,
-            revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
+            extent: context.configuration.dividerExtent
         )
     }
 }
 
 public final class RichColumnsElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.columns
     public init() {}
     public func build(node: RichContentNode, children: [RichElement], context: RichContentRenderContext) -> RichElement? {
@@ -141,6 +146,7 @@ public final class RichColumnsElementBuilder: RichContentElementBuilding {
 }
 
 public final class RichColumnElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.column
     public init() {}
     public func build(node: RichContentNode, children: [RichElement], context: RichContentRenderContext) -> RichElement? {
@@ -149,6 +155,7 @@ public final class RichColumnElementBuilder: RichContentElementBuilding {
 }
 
 public final class RichReferenceElementBuilder: RichContentElementBuilding {
+    public let inputs = false
     public let nodeType = RichContentNodeType.reference
     public init() {}
     public func build(node: RichContentNode, children: [RichElement], context: RichContentRenderContext) -> RichElement? {

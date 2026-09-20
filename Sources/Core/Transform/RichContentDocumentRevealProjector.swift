@@ -41,10 +41,7 @@ public struct RichContentDocumentRevealProjector {
         var remaining = max(0, min(visibleUnitCount, total))
         let projectedRoot = project(document.root, remaining: &remaining, keepsEmptyContainer: true)
             ?? RichContentNode(id: document.root.id, type: .root)
-        let projected = RichContentDocumentReconciler.reconcile(
-            RichContentDocument(root: projectedRoot),
-            with: previousProjection
-        )
+        let projected = RichContentDocument(root: projectedRoot)
         return RichContentRevealResult(
             document: projected,
             visibleUnitCount: max(0, min(visibleUnitCount, total)),
@@ -90,8 +87,7 @@ public struct RichContentDocumentRevealProjector {
             return RichContentNode(
                 id: node.id,
                 type: node.type,
-                content: RichTextContent(text: String(text.text.prefix(visibleCount)), style: text.style),
-                revision: node.revision
+                content: RichTextContent(text: String(text.text.prefix(visibleCount)), style: text.style)
             )
         }
         if node.children.isEmpty {
@@ -113,8 +109,7 @@ public struct RichContentDocumentRevealProjector {
             id: node.id,
             type: node.type,
             content: node.content,
-            children: children,
-            revision: node.revision
+            children: children
         )
     }
 }

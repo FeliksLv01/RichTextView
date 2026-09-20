@@ -302,6 +302,7 @@ final class RichTextViewUsageTests: XCTestCase {
     }
 
     private final class TestImageResolver: RichContentPresentationResolving {
+        let inputs = false
         func imageSource(
             for node: RichContentNode,
             content: RichImageContent
@@ -311,6 +312,7 @@ final class RichTextViewUsageTests: XCTestCase {
     }
 
     private final class TestCustomNodeBuilder: RichContentElementBuilding {
+        let inputs = false
         let nodeType: RichContentNodeType
 
         init(nodeType: RichContentNodeType) {
@@ -325,8 +327,7 @@ final class RichTextViewUsageTests: XCTestCase {
             RichTextElement(
                 id: node.id,
                 attributedText: NSAttributedString(string: "Custom answer card"),
-                display: .block,
-                revision: RichElementRevision(layout: node.revision.layout, display: node.revision.display)
+                display: .block
             )
         }
     }

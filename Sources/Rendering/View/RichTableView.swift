@@ -151,8 +151,7 @@ enum RichTableLayoutBuilder {
                 copyText: anchor.copyText,
                 maximumNumberOfLines: anchor.maximumNumberOfLines,
                 lineBreakMode: .byCharWrapping,
-                display: anchor.display,
-                revision: anchor.revision
+                display: anchor.display
             )
         }
         if let text = element as? RichTextElement {
@@ -162,8 +161,7 @@ enum RichTableLayoutBuilder {
                 copyText: text.copyText,
                 maximumNumberOfLines: text.maximumNumberOfLines,
                 lineBreakMode: .byCharWrapping,
-                display: text.display,
-                revision: text.revision
+                display: text.display
             )
         }
         if let container = element as? RichContainerElement {
@@ -173,8 +171,7 @@ enum RichTableLayoutBuilder {
                 display: container.display,
                 spacing: container.spacing,
                 contentInsets: container.contentInsets,
-                decoration: container.decoration,
-                revision: container.revision
+                decoration: container.decoration
             )
         }
         return element

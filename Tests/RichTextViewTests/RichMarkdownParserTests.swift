@@ -57,31 +57,73 @@ final class RichMarkdownParserTests: XCTestCase {
     }
 
     @MainActor
-    func testInlineAndBlockMathRenderAsNativeLabels() throws {
-        let parsed = makeParser().parse(
-            "Inline \\(x^2 + y^2\\).\n\n$$\n\\frac{a}{b}\n$$",
-            documentID: "math"
-        )
-        let rendered = RichContentRenderer().render(
-            document: parsed.document,
-            constrainedWidth: 320,
-            configuration: .standard
-        )
-        let attachments = flattenElements(rendered.snapshot.root).compactMap { $0 as? RichAttachmentElement }
-        let inline = try XCTUnwrap(attachments.first { if case .inline = $0.display { true } else { false } })
-        let block = try XCTUnwrap(attachments.first { if case .block = $0.display { true } else { false } })
+    func testLatexElementsDrawWithoutViewAttachmentsAndKeepLastValidStream() throws {
+        let renderer = RichContentRenderer()
+        func render(_ latex: String, streaming: Bool = true) -> RichElementSnapshot {
+            renderer.render(document: makeParser().parse(
+                "Inline \\(x^2 + y^2\\).\n\n$$\n" + latex + "\n$$", documentID: "math"
+            ).document, constrainedWidth: 320, configuration: .standard, streaming: streaming).snapshot
+        }
+        let initial = render("x")
+        let formulas = flattenElements(initial.root).compactMap { $0 as? RichLatexElement }
+        XCTAssertEqual(formulas.count, 2)
+        let block = try XCTUnwrap(formulas.last)
+        XCTAssertGreaterThan(block.size.width, 0)
+        let layout = RichTextLayoutEngine().layout(snapshot: initial, constrainedTo: CGSize(width: 320, height: 1000))
+        XCTAssertTrue(layout.attachmentRunBoxes.isEmpty)
+        XCTAssertEqual(layout.textRunBoxes.last?.frame.width, 320)
+        XCTAssertEqual(block.copyText, "$$x$$")
+        let blockRun = try XCTUnwrap(layout.textRunBoxes.last)
+        let height = Int(ceil(blockRun.layout.size.height))
+        let context = try XCTUnwrap(CGContext(data: nil, width: 320, height: height, bitsPerComponent: 8,
+            bytesPerRow: 320 * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        blockRun.layout.draw(in: context, canvasHeight: CGFloat(height), origin: .zero, isCancelled: { false })
+        let pixels = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+        let occupiedColumns = (0..<320).filter { x in (0..<height).contains { y in pixels[(y * 320 + x) * 4 + 3] > 0 } }
+        let left = try XCTUnwrap(occupiedColumns.first)
+        let right = try XCTUnwrap(occupiedColumns.last)
+        XCTAssertEqual(Double(left + right) / 2, 160, accuracy: 2)
+        let unfinished = render("x\\unknowncommand")
+        let retained = try XCTUnwrap(flattenElements(unfinished.root).compactMap { $0 as? RichLatexElement }.last)
+        XCTAssertTrue(retained.layout === block.layout)
+        XCTAssertEqual(retained.size, block.size)
+        let finished = render("x\\frac{1}{2}")
+        let updated = try XCTUnwrap(flattenElements(finished.root).compactMap { $0 as? RichLatexElement }.last)
+        XCTAssertFalse(updated.layout === block.layout)
+        XCTAssertGreaterThan(updated.size.width, block.size.width)
+        let invalidFinal = render("x\\frac{", streaming: false)
+        XCTAssertEqual(flattenElements(invalidFinal.root).compactMap { $0 as? RichLatexElement }.count, 1)
+    }
 
-        XCTAssertEqual(attachments.count, 2)
-        let inlineLabel = try XCTUnwrap(inline.provider.makeView() as? MTMathUILabel)
-        let blockLabel = try XCTUnwrap(block.provider.makeView() as? MTMathUILabel)
-        XCTAssertEqual(inlineLabel.textAlignment, .left)
-        XCTAssertEqual(blockLabel.textAlignment, .center)
-        XCTAssertEqual(block.metrics.size.width, 320)
-        XCTAssertEqual(inline.accessibilityLabel, "x^2 + y^2")
-        XCTAssertEqual(block.accessibilityLabel, "\\frac{a}{b}")
-        XCTAssertGreaterThan(inline.metrics.size.width, 0)
-        XCTAssertGreaterThan(block.metrics.size.height, 0)
-        XCTAssertTrue(rendered.unhandledNodeTypes.isEmpty)
+    @MainActor
+    func testStreamingCasesDisplaysRowsBeforeEnvironmentCloses() throws {
+        let renderer = RichContentRenderer()
+        func formula(_ latex: String, streaming: Bool = true) throws -> RichLatexElement {
+            let document = RichContentDocument(id: "preview", children: [
+                RichContentNode(id: "formula", type: .math, content: RichMathContent(latex: latex, isBlock: true))
+            ])
+            let snapshot = renderer.render(document: document, constrainedWidth: 320,
+                configuration: .standard, streaming: streaming).snapshot
+            return try XCTUnwrap(snapshot.root.children.first as? RichLatexElement)
+        }
+        let firstRow = #"x_n = \begin{cases} 0, & \text{odd}"#
+        let first = try formula(firstRow)
+        XCTAssertEqual(first.latex, firstRow)
+        XCTAssertEqual(first.copyText, "$$" + firstRow + "$$")
+        let secondRow = firstRow + #" \\ n, & \text{even}"#
+        let second = try formula(secondRow)
+        XCTAssertEqual(second.latex, secondRow)
+        XCTAssertGreaterThan(second.size.height, first.size.height)
+        let closingCommand = try formula(secondRow + #"\end{cas"#)
+        XCTAssertEqual(closingCommand.size, second.size)
+        let complete = secondRow + #"\end{cases}"#
+        let final = try formula(complete, streaming: false)
+        XCTAssertEqual(final.size, second.size)
+        let nested = try formula(#"\boxed{\begin{cases} \frac{1}{2}, & \text{odd}"#)
+        XCTAssertGreaterThan(nested.size.height, first.size.height)
+        XCTAssertNil(RichLatexPreview.complete(#"\begin{cases}x\end{matrix}"#))
+        XCTAssertEqual(RichLatexPreview.complete(#"\left\{x"#), #"\left\{x\right."#)
     }
 
     func testStrikethroughRequiresDoubleTilde() {
@@ -144,7 +186,7 @@ final class RichMarkdownParserTests: XCTestCase {
         let cells = flatten(updatedTable).filter { $0.type == .tableCell }
 
         XCTAssertEqual(initialTable.id, updatedTable.id)
-        XCTAssertGreaterThan(updatedTable.revision.layout, initialTable.revision.layout)
+        XCTAssertGreaterThan(flatten(updatedTable).count, flatten(initialTable).count)
         XCTAssertEqual(cells.first?.content(as: RichTableCellContent.self)?.alignment, .left)
         XCTAssertEqual(cells.dropFirst().first?.content(as: RichTableCellContent.self)?.alignment, .right)
     }
@@ -377,6 +419,7 @@ final class RichMarkdownParserTests: XCTestCase {
     }
 
     private final class TestImageResolver: RichContentPresentationResolving {
+        let inputs = false
         func imageSource(
             for node: RichContentNode,
             content: RichImageContent
@@ -386,6 +429,7 @@ final class RichMarkdownParserTests: XCTestCase {
     }
 
     private final class TestCodeResolver: RichContentPresentationResolving {
+        let inputs = false
         func codeBlockPresentation(
             for node: RichContentNode,
             content: RichCodeBlockContent,
