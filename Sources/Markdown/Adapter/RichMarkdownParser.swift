@@ -31,9 +31,12 @@ public struct RichMarkdownParser {
     public func parse(
         _ source: String,
         documentID: String,
-        previousDocument: RichContentDocument? = nil
+        previousDocument: RichContentDocument? = nil,
+        streaming: Bool = false
     ) -> RichMarkdownParseResult {
-        let markup = Document(parsing: Self.preprocessMath(source), options: [.parseBlockDirectives, .parseSymbolLinks])
+        let mathSource = streaming ? RichMarkdownStreamingRewriter.closeMath(in: source) : source
+        var markup = Document(parsing: Self.preprocessMath(mathSource), options: [.parseBlockDirectives, .parseSymbolLinks])
+        if streaming { markup = RichMarkdownStreamingRewriter.rewriteEmphasis(in: markup) }
         return parse(markup, documentID: documentID, previousDocument: previousDocument)
     }
 

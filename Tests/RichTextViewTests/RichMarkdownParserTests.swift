@@ -7,6 +7,24 @@ import iosMath
 #endif
 
 final class RichMarkdownParserTests: XCTestCase {
+    func testStreamingSpeculativelyClosesEmphasisAndMath() {
+        let parser = makeParser()
+        let strong = parser.parse("Prefix ** ddddd", documentID: "strong", streaming: true)
+        let strongText = flatten(strong.document.root).compactMap { $0.content(as: RichTextContent.self) }
+        let math = parser.parse("Value \\(x^2", documentID: "math", streaming: true)
+
+        XCTAssertEqual(strong.plainText, "Prefix  ddddd")
+        XCTAssertTrue(strongText.contains { $0.text == " ddddd" && $0.style.bold })
+        XCTAssertTrue(flatten(math.document.root).contains { $0.type == .math })
+    }
+
+    func testCompleteParsingKeepsUnclosedMarkupLiteral() {
+        let parsed = makeParser().parse("Prefix ** ddddd and \\(x^2", documentID: "literal")
+
+        XCTAssertEqual(parsed.plainText, "Prefix ** ddddd and (x^2")
+        XCTAssertFalse(flatten(parsed.document.root).contains { $0.type == .math })
+    }
+
     @MainActor
     func testThirdLevelBulletIsSmallerThanParentBullets() throws {
         let parsed = makeParser().parse(
