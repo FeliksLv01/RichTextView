@@ -34,11 +34,9 @@ public struct RichMarkdownParser {
         previousDocument: RichContentDocument? = nil,
         streaming: Bool = false
     ) -> RichMarkdownParseResult {
-        let mathSource = streaming ? RichMarkdownStreamingRewriter.closeMath(in: source) : source
-        var markup = Document(parsing: Self.preprocessMath(mathSource), options: [.parseBlockDirectives, .parseSymbolLinks])
-        if streaming { markup = RichMarkdownStreamingRewriter.rewriteEmphasis(in: markup) }
+        let markup = Document(parsing: Self.preprocessMath(source), options: [.parseBlockDirectives, .parseSymbolLinks])
         let result = parse(markup, documentID: documentID, previousDocument: previousDocument)
-        guard streaming, RichMarkdownStreamingRewriter.endsInsideFencedCode(source) else { return result }
+        guard streaming, Self.endsInsideFencedCode(source) else { return result }
         let (root, marked) = markingLastCodeBlockStreaming(in: result.document.root)
         guard marked else { return result }
         let document = RichContentDocument(root: root)
@@ -83,6 +81,22 @@ public struct RichMarkdownParser {
                 with: "`richmath:$1`",
                 options: .regularExpression
             )
+    }
+
+    private static func endsInsideFencedCode(_ source: String) -> Bool {
+        var fence: (marker: Character, length: Int)?
+        for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+            guard let marker = trimmed.first, marker == "`" || marker == "~" else { continue }
+            let length = trimmed.prefix(while: { $0 == marker }).count
+            guard length >= 3 else { continue }
+            if let current = fence {
+                if marker == current.marker, length >= current.length { fence = nil }
+            } else {
+                fence = (marker, length)
+            }
+        }
+        return fence != nil
     }
 
     private func markingLastCodeBlockStreaming(in node: RichContentNode) -> (RichContentNode, Bool) {

@@ -7,15 +7,15 @@ import iosMath
 #endif
 
 final class RichMarkdownParserTests: XCTestCase {
-    func testStreamingSpeculativelyClosesEmphasisAndMath() {
+    func testStreamingLeavesIncompleteEmphasisAndMathUnstyled() {
         let parser = makeParser()
         let strong = parser.parse("Prefix ** ddddd", documentID: "strong", streaming: true)
         let strongText = flatten(strong.document.root).compactMap { $0.content(as: RichTextContent.self) }
         let math = parser.parse("Value \\(x^2", documentID: "math", streaming: true)
 
-        XCTAssertEqual(strong.plainText, "Prefix  ddddd")
-        XCTAssertTrue(strongText.contains { $0.text == " ddddd" && $0.style.bold })
-        XCTAssertTrue(flatten(math.document.root).contains { $0.type == .math })
+        XCTAssertEqual(strong.plainText, "Prefix ** ddddd")
+        XCTAssertFalse(strongText.contains { $0.style.bold })
+        XCTAssertFalse(flatten(math.document.root).contains { $0.type == .math })
     }
 
     func testCompleteParsingKeepsUnclosedMarkupLiteral() {
@@ -57,7 +57,7 @@ final class RichMarkdownParserTests: XCTestCase {
     }
 
     @MainActor
-    func testLatexElementsDrawWithoutViewAttachmentsAndKeepLastValidStream() throws {
+    func testLatexElementsDrawWithoutViewAttachments() throws {
         let renderer = RichContentRenderer()
         func render(_ latex: String, streaming: Bool = true) -> RichElementSnapshot {
             renderer.render(document: makeParser().parse(
@@ -84,10 +84,6 @@ final class RichMarkdownParserTests: XCTestCase {
         let left = try XCTUnwrap(occupiedColumns.first)
         let right = try XCTUnwrap(occupiedColumns.last)
         XCTAssertEqual(Double(left + right) / 2, 160, accuracy: 2)
-        let unfinished = render("x\\unknowncommand")
-        let retained = try XCTUnwrap(flattenElements(unfinished.root).compactMap { $0 as? RichLatexElement }.last)
-        XCTAssertTrue(retained.layout === block.layout)
-        XCTAssertEqual(retained.size, block.size)
         let finished = render("x\\frac{1}{2}")
         let updated = try XCTUnwrap(flattenElements(finished.root).compactMap { $0 as? RichLatexElement }.last)
         XCTAssertFalse(updated.layout === block.layout)
@@ -97,33 +93,79 @@ final class RichMarkdownParserTests: XCTestCase {
     }
 
     @MainActor
-    func testStreamingCasesDisplaysRowsBeforeEnvironmentCloses() throws {
+    func testBoxedBlockLatexHeightIsFullyMeasured() throws {
         let renderer = RichContentRenderer()
-        func formula(_ latex: String, streaming: Bool = true) throws -> RichLatexElement {
-            let document = RichContentDocument(id: "preview", children: [
-                RichContentNode(id: "formula", type: .math, content: RichMathContent(latex: latex, isBlock: true))
-            ])
-            let snapshot = renderer.render(document: document, constrainedWidth: 320,
-                configuration: .standard, streaming: streaming).snapshot
-            return try XCTUnwrap(snapshot.root.children.first as? RichLatexElement)
+        let parsed = makeParser().parse(
+            "\\[\n\\boxed{\\text{无法确定（可能收敛也可能发散）}}\n\\]",
+            documentID: "boxed"
+        )
+        let snapshot = renderer.render(
+            document: parsed.document, constrainedWidth: 350, configuration: .standard
+        ).snapshot
+        let formula = try XCTUnwrap(flattenElements(snapshot.root).compactMap { $0 as? RichLatexElement }.last)
+        let layout = RichTextLayoutEngine().layout(
+            snapshot: snapshot, constrainedTo: CGSize(width: 350, height: 1_000)
+        )
+        let run = try XCTUnwrap(layout.textRunBoxes.last)
+        XCTAssertGreaterThanOrEqual(run.frame.height, formula.size.height)
+    }
+
+    func testInlineCasesAreNotClippedVertically() throws {
+        let latex = try XCTUnwrap(RichLatexLayout(
+            latex: #"x_n=\begin{cases}0,&n\text{为偶数}\\n,&n\text{为奇数}\end{cases}"#,
+            pointSize: 17,
+            isBlock: false,
+            color: .black
+        ))
+        let run = RichLatexRun(layout: latex)
+        let width = Int(ceil(run.width))
+        let height = Int(ceil(run.ascent + run.descent))
+        let context = try XCTUnwrap(CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+
+        run.draw(in: context, baseline: CGPoint(x: 0, y: run.descent))
+
+        let pixels = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+        let occupiedRows = (0..<height).filter { y in
+            (0..<width).contains { x in pixels[(y * width + x) * 4 + 3] > 0 }
         }
-        let firstRow = #"x_n = \begin{cases} 0, & \text{odd}"#
-        let first = try formula(firstRow)
-        XCTAssertEqual(first.latex, firstRow)
-        XCTAssertEqual(first.copyText, "$$" + firstRow + "$$")
-        let secondRow = firstRow + #" \\ n, & \text{even}"#
-        let second = try formula(secondRow)
-        XCTAssertEqual(second.latex, secondRow)
-        XCTAssertGreaterThan(second.size.height, first.size.height)
-        let closingCommand = try formula(secondRow + #"\end{cas"#)
-        XCTAssertEqual(closingCommand.size, second.size)
-        let complete = secondRow + #"\end{cases}"#
-        let final = try formula(complete, streaming: false)
-        XCTAssertEqual(final.size, second.size)
-        let nested = try formula(#"\boxed{\begin{cases} \frac{1}{2}, & \text{odd}"#)
-        XCTAssertGreaterThan(nested.size.height, first.size.height)
-        XCTAssertNil(RichLatexPreview.complete(#"\begin{cases}x\end{matrix}"#))
-        XCTAssertEqual(RichLatexPreview.complete(#"\left\{x"#), #"\left\{x\right."#)
+        let first = try XCTUnwrap(occupiedRows.first)
+        let last = try XCTUnwrap(occupiedRows.last)
+        XCTAssertGreaterThan(first, 0)
+        XCTAssertGreaterThan(last - first, height * 3 / 4)
+    }
+
+    @MainActor
+    func testOversizedInlineLatexFitsAvailableWidth() throws {
+        let parsed = makeParser().parse(
+            #"长行内公式：\(\lim\limits_{n\to\infty}\left(\dfrac{1}{\sqrt{n^2+1}}+\dfrac{1}{\sqrt{n^2+2}}+\cdots+\dfrac{1}{\sqrt{n^2+n}}\right)\)"#,
+            documentID: "wide-inline-formula"
+        )
+        let snapshot = RichContentRenderer().render(
+            document: parsed.document,
+            constrainedWidth: 320,
+            configuration: .standard
+        ).snapshot
+        let formula = try XCTUnwrap(flattenElements(snapshot.root).compactMap { $0 as? RichLatexElement }.first)
+        let layout = RichTextLayoutEngine().layout(
+            snapshot: snapshot,
+            constrainedTo: CGSize(width: 320, height: 1_000)
+        )
+        let formulaRun = try XCTUnwrap(layout.textRunBoxes.last)
+        let latexRun = try XCTUnwrap(
+            formulaRun.text.attribute(RichLatexRun.attribute, at: 0, effectiveRange: nil) as? RichLatexRun
+        )
+
+        XCTAssertGreaterThan(formula.size.width, 320)
+        XCTAssertLessThanOrEqual(latexRun.width, 320)
+        XCTAssertLessThanOrEqual(formulaRun.frame.maxX, 320)
     }
 
     func testStrikethroughRequiresDoubleTilde() {

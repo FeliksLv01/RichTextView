@@ -6,39 +6,31 @@ final class RichRenderLayerDisplayTask: @unchecked Sendable {
     var layout: RichTextLayout?
     var traits: UITraitCollection?
     var images: [String: UIImage] = [:]
+    var didDisplay: (() -> Void)?
 
     func appendedTextRects(comparedTo previous: RichRenderLayerDisplayTask?) -> [CGRect]? {
         guard let layout, let old = previous?.layout, traits == previous?.traits,
               layout.rootElementID == old.rootElementID,
               layout.constrainedSize.width == old.constrainedSize.width else { return nil }
-        let oldRuns = Dictionary(uniqueKeysWithValues: old.textRunBoxes.map { ($0.id, $0) })
-        let newIDs = Set(layout.textRunBoxes.map(\.id))
-        guard oldRuns.keys.allSatisfy({ newIDs.contains($0) }) else { return nil }
+        guard layout.textRunBoxes.count >= old.textRunBoxes.count else { return nil }
         var rects: [CGRect] = []
-        for run in layout.textRunBoxes {
-            let count = oldRuns[run.id]?.text.length ?? 0
-            if let oldRun = oldRuns[run.id] {
+        for (index, run) in layout.textRunBoxes.enumerated() {
+            let oldRun = old.textRunBoxes.indices.contains(index) ? old.textRunBoxes[index] : nil
+            guard oldRun?.id == run.id || oldRun == nil else { return nil }
+            let count = oldRun?.text.length ?? 0
+            if let oldRun {
                 if run.hasSameDrawing(as: oldRun) { continue }
                 guard run.frame.origin == oldRun.frame.origin, run.text.length >= count,
-                      run.text.attributedSubstring(from: NSRange(location: 0, length: count)) == oldRun.text,
-                      run.layout.selectionRects(for: NSRange(location: 0, length: count))
-                        == oldRun.layout.selectionRects(for: NSRange(location: 0, length: count)) else { return nil }
+                      run.text.attributedSubstring(from: NSRange(location: 0, length: count)) == oldRun.text else { return nil }
+                let validationStart = oldRun.layout.lines.last?.range.location ?? count
+                let validationRange = NSRange(location: validationStart, length: count - validationStart)
+                guard run.layout.selectionRects(for: validationRange)
+                    == oldRun.layout.selectionRects(for: validationRange) else { return nil }
             }
             guard run.text.length > count else { continue }
-            let string = run.text.string
             let range = NSRange(location: count, length: run.text.length - count)
-            guard let swiftRange = Range(range, in: string) else { continue }
-            var cursor = count
-            string.enumerateSubstrings(in: swiftRange, options: [.byWords, .substringNotRequired]) { _, word, _, _ in
-                let end = NSMaxRange(NSRange(word, in: string))
-                rects += run.layout.selectionRects(for: NSRange(location: cursor, length: end - cursor))
-                    .map { $0.offsetBy(dx: run.frame.minX, dy: run.frame.minY) }
-                cursor = end
-            }
-            if cursor < run.text.length {
-                rects += run.layout.selectionRects(for: NSRange(location: cursor, length: run.text.length - cursor))
-                    .map { $0.offsetBy(dx: run.frame.minX, dy: run.frame.minY) }
-            }
+            rects += run.layout.selectionRects(for: range)
+                .map { $0.offsetBy(dx: run.frame.minX, dy: run.frame.minY) }
         }
         return rects
     }
@@ -199,6 +191,7 @@ final class RichRenderLayer: CALayer {
             self.displayedTask = task
             self.displayedScale = scale
             CATransaction.commit()
+            task.didDisplay?()
         }
         if displaysAsynchronously {
             Self.displayQueue.async {
@@ -250,7 +243,13 @@ final class RichRenderLayer: CALayer {
         }
         let prefix = displayedScale == scale ? task.unchangedPrefixHeight(comparedTo: displayedTask) : 0
         let oldTiles = tiledLayerContainer?.sublayers ?? []
-        let rects = tileRects(in: visibleTileRect, size: size)
+        var requiredContentRect = visibleContentRect
+        if let layout = task.layout {
+            for line in layout.lines where line.frame.intersects(visibleContentRect) {
+                requiredContentRect = requiredContentRect.union(line.frame)
+            }
+        }
+        let rects = tileRects(in: tileRect(containing: requiredContentRect), size: size)
         var reused: [Int: CALayer] = [:]
         for (index, rect) in rects.enumerated() where rect.maxY <= prefix {
             if let tile = oldTiles.first(where: { $0.frame == rect }) { reused[index] = tile }
@@ -266,36 +265,48 @@ final class RichRenderLayer: CALayer {
             return isCancelled() ? nil : image
         }
 
-        var visibleImages: [Int: CGImage] = [:]
-        for index in rects.indices where reused[index] == nil {
-            let rect = rects[index]
-            guard let image = renderTile(rect) else { return }
-            visibleImages[index] = image
-        }
-        guard currentGuardValue() == capturedGuard else { return }
-
-        updateFadeRegions(for: task)
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        let container = tiledLayerContainer ?? CALayer()
-        container.frame = CGRect(origin: .zero, size: size)
-        var installed: [CALayer] = []
-        for (index, rect) in rects.enumerated() {
-            if let tile = reused[index] {
-                applyFadeMask(to: tile)
-                installed.append(tile)
-            } else if let image = visibleImages[index] {
-                let tile = makeTile(image: image, frame: rect, scale: scale)
-                installed.append(tile)
+        let missingIndices = rects.indices.filter { reused[$0] == nil }
+        let render = { () -> [Int: CGImage]? in
+            var images: [Int: CGImage] = [:]
+            for index in missingIndices {
+                guard let image = renderTile(rects[index]) else { return nil }
+                images[index] = image
             }
+            return images
         }
-        container.sublayers = installed
-        if container.superlayer == nil { insertSublayer(container, at: 0) }
-        tiledLayerContainer = container
-        contents = nil
-        displayedTask = task
-        displayedScale = scale
-        CATransaction.commit()
+        let install = { [weak self] (images: [Int: CGImage]?) in
+            guard let self, let images, self.currentGuardValue() == capturedGuard else { return }
+            self.updateFadeRegions(for: task)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            let container = self.tiledLayerContainer ?? CALayer()
+            container.frame = CGRect(origin: .zero, size: size)
+            var installed: [CALayer] = []
+            for (index, rect) in rects.enumerated() {
+                if let tile = reused[index] {
+                    self.applyFadeMask(to: tile)
+                    installed.append(tile)
+                } else if let image = images[index] {
+                    installed.append(self.makeTile(image: image, frame: rect, scale: scale))
+                }
+            }
+            container.sublayers = installed
+            if container.superlayer == nil { self.insertSublayer(container, at: 0) }
+            self.tiledLayerContainer = container
+            self.contents = nil
+            self.displayedTask = task
+            self.displayedScale = scale
+            CATransaction.commit()
+            task.didDisplay?()
+        }
+        if displaysAsynchronously {
+            Self.displayQueue.async {
+                let images = render()
+                DispatchQueue.main.async { install(images) }
+            }
+        } else {
+            install(render())
+        }
     }
 
     private func tileRects(in rect: CGRect, size: CGSize) -> [CGRect] {

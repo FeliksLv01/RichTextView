@@ -1,21 +1,5 @@
 import UIKit
 
-extension NSAttributedString {
-    var richViewFingerprint: Int {
-        var hasher = Hasher()
-        hasher.combine(string)
-        enumerateAttributes(in: NSRange(location: 0, length: length)) { attributes, range, _ in
-            hasher.combine(range.location)
-            hasher.combine(range.length)
-            for key in attributes.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
-                hasher.combine(key.rawValue)
-                hasher.combine(String(reflecting: attributes[key]))
-            }
-        }
-        return hasher.finalize()
-    }
-}
-
 public class RichTextElement: RichElement, @unchecked Sendable {
     public let attributedText: NSAttributedString
     public let copyText: String

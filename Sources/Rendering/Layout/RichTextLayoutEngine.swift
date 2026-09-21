@@ -129,7 +129,7 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
             return
         }
 
-        if !isRoot, canFlattenAsInline(container), container.contentInsets == .zero,
+        if !isRoot, canFlattenAsInline(container, width: state.width), container.contentInsets == .zero,
            container.decoration == nil {
             state.flushInline(using: self)
             let content = makeInlineContent(from: container)
@@ -148,6 +148,12 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
         var appendedBlock = false
         for child in container.children {
             if child.display == .inline {
+                if let latex = child as? RichLatexElement, latex.size.width > state.width {
+                    state.flushInline(using: self)
+                    layoutBlock(latex, state: &state)
+                    appendedBlock = true
+                    continue
+                }
                 state.appendInline(child, using: self)
                 continue
             }
@@ -290,8 +296,11 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
         }
     }
 
-    private func canFlattenAsInline(_ container: RichContainerElement) -> Bool {
+    private func canFlattenAsInline(_ container: RichContainerElement, width: CGFloat) -> Bool {
         container.children.allSatisfy { child in
+            if let latex = child as? RichLatexElement, latex.size.width > width {
+                return false
+            }
             if child is RichTextElement || child is RichTextBadgeElement || child is RichImageElement {
                 return true
             }
@@ -299,7 +308,7 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
                 return child.display == .inline
             }
             if let nested = child as? RichContainerElement {
-                return nested.display == .inline && canFlattenAsInline(nested)
+                return nested.display == .inline && canFlattenAsInline(nested, width: width)
             }
             return false
         }
@@ -384,7 +393,7 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
                     copyText: badge.copyText,
                     actionIdentifier: badge.actionIdentifier.isEmpty ? nil : badge.actionIdentifier
                 ))
-                hasher.combine(badge.attributedText.richViewFingerprint)
+                hasher.combine(badge.attributedText.hash)
                 hasher.combine(badge.contentInsets.top)
                 hasher.combine(badge.contentInsets.left)
                 hasher.combine(badge.contentInsets.bottom)
@@ -407,7 +416,7 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
                     copyText: textElement.copyText,
                     actionIdentifier: (textElement as? RichActionElement)?.actionIdentifier
                 ))
-                hasher.combine(textElement.attributedText.richViewFingerprint)
+                hasher.combine(textElement.attributedText.hash)
                 if textElement.maximumNumberOfLines > 0 {
                     maximumNumberOfLines = maximumNumberOfLines == 0
                         ? textElement.maximumNumberOfLines

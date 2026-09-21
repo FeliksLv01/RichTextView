@@ -63,7 +63,7 @@ final class RichTextViewUsageTests: XCTestCase {
         view.text = "Hello world"
         let next = view.newRenderDisplayTask()
         let rects = try XCTUnwrap(next.appendedTextRects(comparedTo: old))
-        XCTAssertFalse(rects.isEmpty)
+        XCTAssertEqual(rects.count, 1)
         let run = try XCTUnwrap(next.layout?.textRunBoxes.first)
         let prefix = try XCTUnwrap(run.layout.selectionRects(for: NSRange(location: 0, length: 5)).first)
         XCTAssertTrue(rects.allSatisfy { $0.minX >= prefix.maxX })
@@ -101,28 +101,43 @@ final class RichTextViewUsageTests: XCTestCase {
         XCTAssertTrue(layer.sublayers?.isEmpty ?? true, "A reused view must reject stale rendering results")
     }
 
-    func testViewportAlwaysInstallsVisibleTileSynchronously() throws {
+    func testViewportInstallsVisibleTileAsynchronously() async throws {
         let layer = RichRenderLayer()
         layer.bounds = CGRect(x: 0, y: 0, width: 100, height: 1_000)
         layer.maximumTileSize = CGSize(width: 100, height: 100)
         layer.displaysAsynchronously = true
         let delegate = StreamingLayerDelegate()
         layer.richDisplayDelegate = delegate
+        delegate.task.layout = RichTextLayout(
+            rootElementID: "root",
+            constrainedSize: layer.bounds.size,
+            contentSize: layer.bounds.size,
+            runBoxes: [],
+            lines: [RichLineBox(frame: CGRect(x: 0, y: 480, width: 100, height: 40), runBoxIDs: [])]
+        )
+        let started = expectation(description: "Viewport drawing starts")
+        let finished = expectation(description: "Viewport drawing finishes")
+        started.expectedFulfillmentCount = 2
+        finished.expectedFulfillmentCount = 2
         delegate.task.display = { context, size, _ in
+            started.fulfill()
+            Thread.sleep(forTimeInterval: 0.2)
             context.fill(CGRect(origin: .zero, size: size))
+            finished.fulfill()
         }
 
         layer.updateVisibleRect(CGRect(x: 0, y: 400, width: 100, height: 100), viewportHeight: 100)
+        let begin = CACurrentMediaTime()
         layer.display()
-        var tiles = try XCTUnwrap(layer.sublayers?.first?.sublayers)
+        XCTAssertLessThan(CACurrentMediaTime() - begin, 0.1, "Viewport drawing must not block the main thread")
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertTrue(layer.sublayers?.isEmpty ?? true)
+        await fulfillment(of: [finished], timeout: 2)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let tiles = try XCTUnwrap(layer.sublayers?.first?.sublayers)
         XCTAssertTrue(tiles.contains { $0.frame.intersects(CGRect(x: 0, y: 400, width: 100, height: 100)) })
-        XCTAssertEqual(tiles.count, 1)
-
-        layer.updateVisibleRect(CGRect(x: 0, y: 800, width: 100, height: 100), viewportHeight: 100)
-        layer.display()
-        tiles = try XCTUnwrap(layer.sublayers?.first?.sublayers)
-        XCTAssertTrue(tiles.contains { $0.frame.intersects(CGRect(x: 0, y: 800, width: 100, height: 100)) })
-        XCTAssertEqual(tiles.count, 1)
+        XCTAssertTrue(tiles.contains { $0.frame.minY == 500 })
+        XCTAssertEqual(tiles.count, 2)
     }
 
     func testViewportThresholdUsesAvailableHeightInsteadOfWidth() {

@@ -89,6 +89,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
 
     public weak var interactionDelegate: RichTextViewInteractionDelegate?
     public var actionHandler: ((RichTextView, String) -> Void)?
+    public var didDisplay: (() -> Void)?
     public var selectionHandler: ((RichSelection?) -> Void)?
     public var selectionMenuActions: ((RichSelection) -> [RichSelectionMenuAction])?
     public weak var selectionMenuPresenter: RichSelectionMenuPresenting?
@@ -468,6 +469,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         task.layout = layout
         task.traits = displayTraits
         task.images = loadedImages
+        task.didDisplay = { [weak self] in self?.didDisplay?() }
         task.display = { context, size, isCancelled in
             displayTraits.performAsCurrent {
                 guard let layout else { return }
