@@ -473,9 +473,24 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
                 guard let layout else { return }
                 let clip = context.boundingBoxOfClipPath
                 let visible = CGRect(x: clip.minX, y: size.height - clip.maxY, width: clip.width, height: clip.height)
-                for runBox in layout.runBoxes where runBox.frame.intersects(visible) {
-                    guard let decorationRunBox = runBox as? RichDecorationRunBox,
-                          case let .background(color, cornerRadius) = decorationRunBox.decoration else { continue }
+                for runBox in layout.runBoxes.reversed() where runBox.frame.intersects(visible) {
+                    guard let decorationRunBox = runBox as? RichDecorationRunBox else { continue }
+                    let color: UIColor
+                    let cornerRadius: CGFloat
+                    let roundsTopCornersOnly: Bool
+                    switch decorationRunBox.decoration {
+                    case let .background(backgroundColor, radius),
+                         let .borderedBackground(backgroundColor, radius, _, _):
+                        color = backgroundColor
+                        cornerRadius = radius
+                        roundsTopCornersOnly = false
+                    case let .topRoundedBackground(backgroundColor, radius):
+                        color = backgroundColor
+                        cornerRadius = radius
+                        roundsTopCornersOnly = true
+                    default:
+                        continue
+                    }
                     let rect = CGRect(
                         x: decorationRunBox.frame.minX,
                         y: size.height - decorationRunBox.frame.maxY,
@@ -483,12 +498,37 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
                         height: decorationRunBox.frame.height
                     )
                     context.setFillColor(color.cgColor)
-                    context.addPath(CGPath(
-                        roundedRect: rect,
-                        cornerWidth: cornerRadius,
-                        cornerHeight: cornerRadius,
-                        transform: nil
-                    ))
+                    if roundsTopCornersOnly {
+                        let radius = min(max(0, cornerRadius), min(rect.width, rect.height) / 2)
+                        let path = CGMutablePath()
+                        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+                        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+                        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+                        path.addArc(
+                            center: CGPoint(x: rect.maxX - radius, y: rect.maxY - radius),
+                            radius: radius,
+                            startAngle: 0,
+                            endAngle: .pi / 2,
+                            clockwise: false
+                        )
+                        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+                        path.addArc(
+                            center: CGPoint(x: rect.minX + radius, y: rect.maxY - radius),
+                            radius: radius,
+                            startAngle: .pi / 2,
+                            endAngle: .pi,
+                            clockwise: false
+                        )
+                        path.closeSubpath()
+                        context.addPath(path)
+                    } else {
+                        context.addPath(CGPath(
+                            roundedRect: rect,
+                            cornerWidth: cornerRadius,
+                            cornerHeight: cornerRadius,
+                            transform: nil
+                        ))
+                    }
                     context.fillPath()
                 }
                 for runBox in layout.runBoxes where runBox.frame.intersects(visible) {
@@ -523,8 +563,47 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
                         )
                     } else if let decorationRunBox = runBox as? RichDecorationRunBox {
                         switch decorationRunBox.decoration {
-                        case .background:
+                        case .background, .topRoundedBackground:
                             continue
+                        case let .borderedBackground(_, cornerRadius, borderColor, borderWidth):
+                            guard borderWidth > 0 else { continue }
+                            let inset = borderWidth / 2
+                            let rect = CGRect(
+                                x: decorationRunBox.frame.minX,
+                                y: size.height - decorationRunBox.frame.maxY,
+                                width: decorationRunBox.frame.width,
+                                height: decorationRunBox.frame.height
+                            ).insetBy(dx: inset, dy: inset)
+                            context.setStrokeColor(borderColor.cgColor)
+                            context.setLineWidth(borderWidth)
+                            context.addPath(CGPath(
+                                roundedRect: rect,
+                                cornerWidth: max(0, cornerRadius - inset),
+                                cornerHeight: max(0, cornerRadius - inset),
+                                transform: nil
+                            ))
+                            context.strokePath()
+                        case let .verticalGradient(topColor, bottomColor):
+                            let rect = CGRect(
+                                x: decorationRunBox.frame.minX,
+                                y: size.height - decorationRunBox.frame.maxY,
+                                width: decorationRunBox.frame.width,
+                                height: decorationRunBox.frame.height
+                            )
+                            guard let gradient = CGGradient(
+                                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                colors: [bottomColor.cgColor, topColor.cgColor] as CFArray,
+                                locations: [0, 1]
+                            ) else { continue }
+                            context.saveGState()
+                            context.clip(to: rect)
+                            context.drawLinearGradient(
+                                gradient,
+                                start: CGPoint(x: rect.midX, y: rect.minY),
+                                end: CGPoint(x: rect.midX, y: rect.maxY),
+                                options: []
+                            )
+                            context.restoreGState()
                         case let .leadingRule(color, _):
                             context.setFillColor(color.cgColor)
                             context.fill(CGRect(

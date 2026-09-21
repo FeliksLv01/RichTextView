@@ -16,6 +16,22 @@ enum RichMarkdownStreamingRewriter {
         return rewriter.visit(document) as? Document ?? document
     }
 
+    static func endsInsideFencedCode(_ source: String) -> Bool {
+        var fence: (marker: Character, length: Int)?
+        for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+            guard let marker = trimmed.first, marker == "`" || marker == "~" else { continue }
+            let length = trimmed.prefix(while: { $0 == marker }).count
+            guard length >= 3 else { continue }
+            if let current = fence {
+                if marker == current.marker, length >= current.length { fence = nil }
+            } else {
+                fence = (marker, length)
+            }
+        }
+        return fence != nil
+    }
+
     private static func hasUnclosedPair(in source: String, open: String, close: String) -> Bool {
         if open == close {
             return source.allRanges(of: open).count.isMultiple(of: 2) == false

@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name = 'RichTextView'
-  s.version = '0.1.1'
+  s.version = '0.1.2'
   s.summary = 'A unified rich-text node-tree renderer for UIKit'
   s.description = <<-DESC
     RichTextView renders an immutable, format-independent rich-text node tree
@@ -21,6 +21,7 @@ Pod::Spec.new do |s|
 
   s.subspec 'Core' do |core|
     core.source_files = 'Sources/Core/**/*.swift', 'Sources/Rendering/**/*.swift'
+    core.resource_bundles = { 'RichTextViewResources' => ['Sources/Resources/**/*'] }
     core.dependency 'RichTextViewTreeSitterBinary', '0.25.10.2'
     core.dependency 'RichTextViewMathBinary', '2.5.0.2'
 

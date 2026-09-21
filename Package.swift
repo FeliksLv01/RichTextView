@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "RichTextView",
+    defaultLocalization: "en",
     platforms: [.iOS(.v15)],
     products: [
         .library(name: "RichTextView", targets: ["RichTextView"]),
@@ -44,7 +45,8 @@ let package = Package(
                 "iosMath"
             ],
             path: "Sources",
-            exclude: ["Markdown"]
+            exclude: ["Markdown"],
+            resources: [.process("Resources")]
         ),
         .target(
             name: "RichTextViewMarkdown",

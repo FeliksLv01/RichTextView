@@ -117,6 +117,10 @@ extension RichRunBox {
         case let (a as RichDecorationRunBox, b as RichDecorationRunBox):
             switch (a.decoration, b.decoration) {
             case let (.background(ac, ar), .background(bc, br)): return ac == bc && ar == br
+            case let (.topRoundedBackground(ac, ar), .topRoundedBackground(bc, br)): return ac == bc && ar == br
+            case let (.borderedBackground(ac, ar, abc, abw), .borderedBackground(bc, br, bbc, bbw)):
+                return ac == bc && ar == br && abc == bbc && abw == bbw
+            case let (.verticalGradient(at, ab), .verticalGradient(bt, bb)): return at == bt && ab == bb
             case let (.leadingRule(ac, aw), .leadingRule(bc, bw)): return ac == bc && aw == bw
             case let (.horizontalRule(ac), .horizontalRule(bc)): return ac == bc
             case let (.listMarker(at, aw), .listMarker(bt, bw)): return at == bt && aw == bw

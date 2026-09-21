@@ -27,7 +27,7 @@ public enum RichCodeBlockHighlighting {
         storage.setPlugin(nil)
     }
 
-    static func presentation(
+    public static func presentation(
         for code: String,
         language: String,
         nodeID: String
@@ -37,6 +37,18 @@ public enum RichCodeBlockHighlighting {
             language: language,
             nodeID: nodeID
         )
+    }
+
+    public static func presentation(
+        for code: String,
+        language: String,
+        nodeID: String,
+        theme: RichCodeHighlightTheme
+    ) -> RichCodeBlockPresentation? {
+        RichBuiltInCodeBlockHighlightingPlugin(
+            theme: theme,
+            maximumCachedCodeBlocks: 1
+        ).codeBlockPresentation(for: code, language: language, nodeID: nodeID)
     }
 
     private static let storage = RichCodeBlockHighlightingStorage()

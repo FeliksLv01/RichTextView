@@ -150,9 +150,11 @@ public struct RichImageContent: RichContentNodeContent, Equatable {
 
 public struct RichCodeBlockContent: RichContentNodeContent, Equatable {
     public let language: String
+    public let isStreaming: Bool
 
-    public init(language: String = "") {
+    public init(language: String = "", isStreaming: Bool = false) {
         self.language = language
+        self.isStreaming = isStreaming
     }
 }
 

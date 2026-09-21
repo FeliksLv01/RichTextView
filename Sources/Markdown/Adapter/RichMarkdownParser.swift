@@ -37,7 +37,16 @@ public struct RichMarkdownParser {
         let mathSource = streaming ? RichMarkdownStreamingRewriter.closeMath(in: source) : source
         var markup = Document(parsing: Self.preprocessMath(mathSource), options: [.parseBlockDirectives, .parseSymbolLinks])
         if streaming { markup = RichMarkdownStreamingRewriter.rewriteEmphasis(in: markup) }
-        return parse(markup, documentID: documentID, previousDocument: previousDocument)
+        let result = parse(markup, documentID: documentID, previousDocument: previousDocument)
+        guard streaming, RichMarkdownStreamingRewriter.endsInsideFencedCode(source) else { return result }
+        let (root, marked) = markingLastCodeBlockStreaming(in: result.document.root)
+        guard marked else { return result }
+        let document = RichContentDocument(root: root)
+        return RichMarkdownParseResult(
+            document: document,
+            plainText: document.plainText,
+            visibleUnitCount: revealProjector.unitCount(in: document)
+        )
     }
 
     public func parse(
@@ -74,6 +83,27 @@ public struct RichMarkdownParser {
                 with: "`richmath:$1`",
                 options: .regularExpression
             )
+    }
+
+    private func markingLastCodeBlockStreaming(in node: RichContentNode) -> (RichContentNode, Bool) {
+        var children = node.children
+        for index in children.indices.reversed() {
+            let (child, marked) = markingLastCodeBlockStreaming(in: children[index])
+            guard marked else { continue }
+            children[index] = child
+            return (RichContentNode(id: node.id, type: node.type, content: node.content, children: children), true)
+        }
+        guard node.type == .codeBlock else { return (node, false) }
+        let content = node.content(as: RichCodeBlockContent.self) ?? RichCodeBlockContent()
+        return (
+            RichContentNode(
+                id: node.id,
+                type: node.type,
+                content: RichCodeBlockContent(language: content.language, isStreaming: true),
+                children: children
+            ),
+            true
+        )
     }
 
     private func convert(

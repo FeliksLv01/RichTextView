@@ -122,6 +122,11 @@ public struct RichCodeBlockPresentation {
     }
 }
 
+public enum RichCodeBlockOverflowBehavior: Hashable, Sendable {
+    case wrapAndCollapse
+    case horizontalScroll
+}
+
 public protocol RichContentPresentationResolving: AnyObject {
     /// Immutable value containing every external input used by presentation methods.
     associatedtype Inputs: Hashable
@@ -177,6 +182,7 @@ public struct RichContentRenderingConfiguration {
     public let codeBlockBackgroundColor: UIColor
     public let codeBlockInsets: RichContainerInsets
     public let codeBlockCornerRadius: CGFloat
+    public let codeBlockOverflowBehavior: RichCodeBlockOverflowBehavior
     public let tableStyle: RichTableStyle
     public let dividerColor: UIColor
     public let dividerHeight: CGFloat
@@ -234,6 +240,7 @@ public struct RichContentRenderingConfiguration {
         codeBlockBackgroundColor: UIColor? = nil,
         codeBlockInsets: RichContainerInsets = RichContainerInsets(top: 12, left: 16, bottom: 12, right: 16),
         codeBlockCornerRadius: CGFloat = 8,
+        codeBlockOverflowBehavior: RichCodeBlockOverflowBehavior = .wrapAndCollapse,
         tableStyle: RichTableStyle = .standard,
         highlightTextColor: UIColor,
         highlightBackgroundColor: UIColor,
@@ -270,6 +277,7 @@ public struct RichContentRenderingConfiguration {
         self.codeBlockBackgroundColor = codeBlockBackgroundColor ?? codeBackgroundColor
         self.codeBlockInsets = codeBlockInsets
         self.codeBlockCornerRadius = max(0, codeBlockCornerRadius)
+        self.codeBlockOverflowBehavior = codeBlockOverflowBehavior
         self.tableStyle = tableStyle
         self.dividerColor = dividerColor ?? blockQuoteColor
         self.dividerHeight = dividerHeight
@@ -351,6 +359,7 @@ extension RichContentRenderingConfiguration {
             && codeBlockBackgroundColor == other.codeBlockBackgroundColor
             && codeBlockInsets == other.codeBlockInsets
             && codeBlockCornerRadius == other.codeBlockCornerRadius
+            && codeBlockOverflowBehavior == other.codeBlockOverflowBehavior
             && tableStyle == other.tableStyle
             && dividerColor == other.dividerColor
             && dividerHeight == other.dividerHeight

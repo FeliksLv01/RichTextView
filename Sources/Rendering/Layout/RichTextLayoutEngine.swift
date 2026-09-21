@@ -182,13 +182,15 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
     ) {
         guard let decoration = container.decoration else { return }
         switch decoration {
-        case .background:
+        case .background, .topRoundedBackground, .borderedBackground:
             let frame = CGRect(x: x, y: startY, width: state.width, height: max(0, endY - startY))
             state.appendDecoration(RichDecorationRunBox(
                 id: "\(container.id)-decoration",
                 frame: frame,
                 decoration: decoration
             ))
+        case .verticalGradient:
+            assertionFailure("Vertical gradients are laid out by RichVerticalGradientElement")
         case let .leadingRule(_, width):
             let frame = CGRect(x: x, y: startY, width: max(0, width), height: max(0, endY - startY))
             state.appendDecoration(RichDecorationRunBox(
@@ -255,6 +257,18 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
                 frame: frame,
                 contentFrame: contentFrame,
                 globalRange: globalRange
+            ))
+        case let gradient as RichVerticalGradientElement:
+            let frame = CGRect(
+                x: state.originX,
+                y: max(0, state.cursorY - gradient.extent),
+                width: state.width,
+                height: gradient.extent
+            )
+            state.appendDecoration(RichDecorationRunBox(
+                id: gradient.id,
+                frame: frame,
+                decoration: .verticalGradient(topColor: gradient.topColor, bottomColor: gradient.bottomColor)
             ))
         case let lineBreak as RichBreakElement:
             state.cursorY += max(0, lineBreak.extent)

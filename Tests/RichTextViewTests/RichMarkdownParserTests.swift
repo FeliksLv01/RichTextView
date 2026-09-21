@@ -247,41 +247,24 @@ final class RichMarkdownParserTests: XCTestCase {
         let inlineCode = try XCTUnwrap(elements.compactMap { $0 as? RichTextBadgeElement }.first {
             $0.attributedText.string == "inlineCode"
         })
-        let highlightedCode = try XCTUnwrap(elements.compactMap { $0 as? RichAttachmentElement }.first {
-            $0.reuseIdentifier == RichCodeBlockViewProvider.reuseIdentifier
+        let highlightedCode = try XCTUnwrap(elements.compactMap { $0 as? RichTextElement }.first {
+            $0.attributedText.string == "let value = 42"
         })
-        let provider = try XCTUnwrap(highlightedCode.provider as? RichCodeBlockViewProvider)
 
         XCTAssertNotNil(inlineCode.attributedText.attribute(.backgroundColor, at: 0, effectiveRange: nil))
         XCTAssertEqual(inlineCode.cornerRadius, 4)
         XCTAssertEqual(inlineCode.borderWidth, 1)
         XCTAssertEqual(highlightedCode.copyText, "let value = 42")
-        XCTAssertTrue(highlightedCode.isSelectable)
-        XCTAssertGreaterThan(provider.requiredHeight, 24)
-        let longLine = NSAttributedString(
-            string: "view.isTextSelectionEnabled = true",
-            attributes: [.font: UIFont.monospacedSystemFont(ofSize: 17, weight: .regular)]
-        )
-        XCTAssertGreaterThan(
-            RichCodeBlockViewProvider.requiredContentSize(
-                for: longLine,
-                contentInsets: RichContainerInsets(top: 12, left: 16, bottom: 12, right: 16)
-            ).width,
-            320
-        )
-        let multiline = NSAttributedString(
-            string: "first line\nsecond line\nthird line",
-            attributes: [.font: UIFont.monospacedSystemFont(ofSize: 17, weight: .regular)]
-        )
-        let insets = RichContainerInsets(top: 12, left: 16, bottom: 12, right: 16)
-        let measured = RichCodeBlockViewProvider.requiredContentSize(for: multiline, contentInsets: insets)
-        let displayed = RichTextView()
-        displayed.lineBreakMode = .byClipping
-        displayed.attributedText = multiline
+        XCTAssertEqual(highlightedCode.maximumNumberOfLines, 15)
+        XCTAssertEqual(highlightedCode.lineBreakMode, .byCharWrapping)
         XCTAssertEqual(
-            measured.height,
-            displayed.sizeThatFits(CGSize(width: 320, height: 100_000)).height + insets.top + insets.bottom
+            (highlightedCode.attributedText.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.lineBreakMode,
+            .byCharWrapping
         )
+        XCTAssertTrue(elements.compactMap { $0 as? RichImageElement }.contains {
+            $0.actionIdentifier.hasPrefix("copy-code:")
+        })
+        XCTAssertFalse(elements.contains { $0 is RichAttachmentElement })
         XCTAssertTrue(rendered.unhandledNodeTypes.isEmpty)
     }
 
@@ -300,11 +283,119 @@ final class RichMarkdownParserTests: XCTestCase {
             constrainedTo: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
         )
         let label = try XCTUnwrap(layout.textRunBoxes.first)
-        let code = try XCTUnwrap(layout.attachmentRunBoxes.first {
-            $0.element.reuseIdentifier == RichCodeBlockViewProvider.reuseIdentifier
+        let codeBackground = try XCTUnwrap(layout.runBoxes.compactMap { $0 as? RichDecorationRunBox }.first {
+            if case .borderedBackground = $0.decoration { return true }
+            return false
         })
 
-        XCTAssertEqual(code.frame.minY - label.frame.maxY, RichContentLayoutMetrics().blockSpacing)
+        XCTAssertEqual(codeBackground.frame.minY - label.frame.maxY, RichContentLayoutMetrics().blockSpacing)
+        XCTAssertTrue(layout.attachmentRunBoxes.isEmpty)
+    }
+
+    @MainActor
+    func testCodeBlockCanRestoreHorizontalScrolling() throws {
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let configuration = RichContentRenderingConfiguration(
+            font: font,
+            lineHeight: font.lineHeight,
+            textColor: .label,
+            secondaryTextColor: .secondaryLabel,
+            linkColor: .link,
+            currentMentionTextColor: .label,
+            currentMentionBackgroundColor: .tertiarySystemFill,
+            contrastBackgroundColor: .secondarySystemBackground,
+            blockQuoteColor: .separator,
+            codeBackgroundColor: .secondarySystemBackground,
+            codeBlockOverflowBehavior: .horizontalScroll,
+            highlightTextColor: .label,
+            highlightBackgroundColor: .systemYellow
+        )
+        let parsed = makeParser().parse(
+            "```swift\nlet value = aVeryLongExpressionThatNeedsHorizontalScrolling\n```",
+            documentID: "scrolling-code"
+        )
+        let rendered = RichContentRenderer().render(
+            document: parsed.document,
+            constrainedWidth: 120,
+            configuration: configuration
+        )
+        let attachment = try XCTUnwrap(flattenElements(rendered.snapshot.root).compactMap {
+            $0 as? RichAttachmentElement
+        }.first)
+
+        XCTAssertEqual(configuration.codeBlockOverflowBehavior, .horizontalScroll)
+        XCTAssertEqual(attachment.reuseIdentifier, RichCodeBlockViewProvider.reuseIdentifier)
+        XCTAssertTrue(attachment.provider is RichCodeBlockViewProvider)
+    }
+
+    @MainActor
+    func testLongCodeBlockFollowsTailWhileStreamingAndReturnsToHeadWhenComplete() throws {
+        let lines = (0..<20).map { "line \($0)" }.joined(separator: "\n")
+        let parser = makeParser()
+        let renderer = RichContentRenderer()
+        let open = parser.parse("```swift\n" + lines, documentID: "stream-code", streaming: true)
+        let openContent = try XCTUnwrap(flatten(open.document.root).compactMap {
+            $0.content(as: RichCodeBlockContent.self)
+        }.last)
+        let openSnapshot = renderer.render(
+            document: open.document,
+            constrainedWidth: 320,
+            configuration: .standard,
+            streaming: true
+        ).snapshot
+        let openLayout = RichTextLayoutEngine().layout(
+            snapshot: openSnapshot,
+            constrainedTo: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+        )
+        let streamedCode = try XCTUnwrap(openLayout.textRunBoxes.first { $0.text.string.contains("line 19") })
+
+        XCTAssertTrue(openContent.isStreaming)
+        XCTAssertFalse(streamedCode.text.string.contains("line 0"))
+        XCTAssertEqual(streamedCode.layout.lines.count, 15)
+        XCTAssertTrue(openLayout.attachmentRunBoxes.isEmpty)
+
+        let closed = parser.parse("```swift\n" + lines + "\n```", documentID: "stream-code", streaming: true)
+        let closedContent = try XCTUnwrap(flatten(closed.document.root).compactMap {
+            $0.content(as: RichCodeBlockContent.self)
+        }.last)
+        let closedSnapshot = renderer.render(
+            document: closed.document,
+            constrainedWidth: 320,
+            configuration: .standard,
+            streaming: true
+        ).snapshot
+        let closedLayout = RichTextLayoutEngine().layout(
+            snapshot: closedSnapshot,
+            constrainedTo: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+        )
+        let completedCode = try XCTUnwrap(closedLayout.textRunBoxes.first { $0.text.string.contains("line 0") })
+        let viewAll = try XCTUnwrap(closedLayout.textRunBoxes.first {
+            $0.segments.contains { $0.actionIdentifier?.hasPrefix("code-block:") == true }
+        })
+
+        XCTAssertFalse(closedContent.isStreaming)
+        XCTAssertEqual(completedCode.layout.lines.count, 15)
+        XCTAssertTrue(viewAll.segments.first?.actionIdentifier?.hasPrefix("code-block:") == true)
+        XCTAssertTrue(closedLayout.runBoxes.contains {
+            guard let decoration = $0 as? RichDecorationRunBox,
+                  case .verticalGradient = decoration.decoration else { return false }
+            return true
+        })
+
+        let longLine = String(repeating: "abcdefghij", count: 20)
+        let wrapped = parser.parse("```text\n" + longLine + "\n```", documentID: "wrapped-code")
+        let wrappedSnapshot = renderer.render(
+            document: wrapped.document,
+            constrainedWidth: 120,
+            configuration: .standard
+        ).snapshot
+        let wrappedLayout = RichTextLayoutEngine().layout(
+            snapshot: wrappedSnapshot,
+            constrainedTo: CGSize(width: 120, height: CGFloat.greatestFiniteMagnitude)
+        )
+        let wrappedCode = try XCTUnwrap(wrappedLayout.textRunBoxes.first { $0.text.string == longLine })
+        XCTAssertGreaterThan(wrappedCode.layout.lines.count, 1)
+        XCTAssertLessThanOrEqual(wrappedCode.frame.maxX, 120)
     }
 
     @MainActor

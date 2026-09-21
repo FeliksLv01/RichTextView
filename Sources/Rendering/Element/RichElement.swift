@@ -23,9 +23,25 @@ public struct RichContainerInsets: Hashable, Sendable {
 
 public enum RichContainerDecoration: @unchecked Sendable {
     case background(color: UIColor, cornerRadius: CGFloat)
+    case topRoundedBackground(color: UIColor, cornerRadius: CGFloat)
+    case borderedBackground(color: UIColor, cornerRadius: CGFloat, borderColor: UIColor, borderWidth: CGFloat)
+    case verticalGradient(topColor: UIColor, bottomColor: UIColor)
     case leadingRule(color: UIColor, width: CGFloat)
     case listMarker(attributedText: NSAttributedString, width: CGFloat)
     case horizontalRule(color: UIColor)
+}
+
+final class RichVerticalGradientElement: RichElement, @unchecked Sendable {
+    let topColor: UIColor
+    let bottomColor: UIColor
+    let extent: CGFloat
+
+    init(id: String, topColor: UIColor, bottomColor: UIColor, extent: CGFloat) {
+        self.topColor = topColor
+        self.bottomColor = bottomColor
+        self.extent = max(0, extent)
+        super.init(id: id, display: .block)
+    }
 }
 
 open class RichElement: @unchecked Sendable {
