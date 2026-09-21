@@ -101,6 +101,43 @@ final class RichTextViewUsageTests: XCTestCase {
         XCTAssertTrue(layer.sublayers?.isEmpty ?? true, "A reused view must reject stale rendering results")
     }
 
+    func testViewportAlwaysInstallsVisibleTileSynchronously() throws {
+        let layer = RichRenderLayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: 100, height: 1_000)
+        layer.maximumTileSize = CGSize(width: 100, height: 100)
+        layer.displaysAsynchronously = true
+        let delegate = StreamingLayerDelegate()
+        layer.richDisplayDelegate = delegate
+        delegate.task.display = { context, size, _ in
+            context.fill(CGRect(origin: .zero, size: size))
+        }
+
+        layer.updateVisibleRect(CGRect(x: 0, y: 400, width: 100, height: 100), viewportHeight: 100)
+        layer.display()
+        var tiles = try XCTUnwrap(layer.sublayers?.first?.sublayers)
+        XCTAssertTrue(tiles.contains { $0.frame.intersects(CGRect(x: 0, y: 400, width: 100, height: 100)) })
+        XCTAssertEqual(tiles.count, 1)
+
+        layer.updateVisibleRect(CGRect(x: 0, y: 800, width: 100, height: 100), viewportHeight: 100)
+        layer.display()
+        tiles = try XCTUnwrap(layer.sublayers?.first?.sublayers)
+        XCTAssertTrue(tiles.contains { $0.frame.intersects(CGRect(x: 0, y: 800, width: 100, height: 100)) })
+        XCTAssertEqual(tiles.count, 1)
+    }
+
+    func testViewportThresholdUsesAvailableHeightInsteadOfWidth() {
+        let layer = RichRenderLayer()
+        layer.maximumTileSize = CGSize(width: 1_024, height: 1_024)
+        layer.bounds = CGRect(x: 0, y: 0, width: 1_200, height: 1_100)
+
+        layer.updateVisibleRect(layer.bounds, viewportHeight: 1_200)
+        XCTAssertFalse(layer.needsViewport)
+
+        layer.bounds.size.height = 1_300
+        layer.updateVisibleRect(CGRect(x: 0, y: 0, width: 1_200, height: 1_200), viewportHeight: 1_200)
+        XCTAssertTrue(layer.needsViewport)
+    }
+
     func testAttributedStringEntryPointPreservesContentAndProducesLayout() {
         let source = NSAttributedString(
             string: "Attributed text",

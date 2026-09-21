@@ -79,8 +79,33 @@ final class RichRenderLayer: CALayer {
     private var tiledLayerContainer: CALayer?
     private var displayedTask: RichRenderLayerDisplayTask?
     private var displayedScale: CGFloat = 0
+    private var visibleContentRect: CGRect?
+    private var visibleTileRect: CGRect?
+    private var viewportHeight: CGFloat?
     private var fadeRegions: [(rect: CGRect, start: CFTimeInterval)] = []
     private let fadeDuration: CFTimeInterval = 0.25
+
+    var mayNeedViewport: Bool {
+        maximumTileSize.width > 0 && maximumTileSize.height > 0
+            && bounds.height > maximumTileSize.height
+    }
+
+    var needsViewport: Bool {
+        mayNeedViewport && bounds.height > max(maximumTileSize.height, viewportHeight ?? 0)
+    }
+
+    func updateVisibleRect(_ rect: CGRect, viewportHeight: CGFloat) {
+        let previouslyNeededViewport = needsViewport
+        self.viewportHeight = viewportHeight > 0 && viewportHeight.isFinite ? viewportHeight : nil
+        let clipped = rect.intersection(bounds)
+        let contentRect = clipped.isNull ? .zero : clipped
+        let tileRect = tileRect(containing: contentRect)
+        visibleContentRect = contentRect
+        guard tileRect != visibleTileRect || needsViewport != previouslyNeededViewport else { return }
+        visibleTileRect = tileRect
+        invalidateDisplay()
+        super.setNeedsDisplay()
+    }
 
     override func setNeedsDisplay() {
         invalidateDisplay()
@@ -98,6 +123,18 @@ final class RichRenderLayer: CALayer {
         let capturedGuard = currentGuardValue()
         let size = bounds.size
         let scale = max(1, contentsScale)
+        if needsViewport, let visibleContentRect, let visibleTileRect {
+            displayViewportTiles(
+                task: task,
+                display: display,
+                size: size,
+                scale: scale,
+                visibleContentRect: visibleContentRect,
+                visibleTileRect: visibleTileRect,
+                capturedGuard: capturedGuard
+            )
+            return
+        }
         let prefix = displayedScale == scale ? task.unchangedPrefixHeight(comparedTo: displayedTask) : 0
         let oldTiles = tiledLayerContainer?.sublayers ?? []
         let tileWidth = maximumTileSize.width > 0 ? min(size.width, maximumTileSize.width) : size.width
@@ -186,6 +223,119 @@ final class RichRenderLayer: CALayer {
         tiledLayerContainer = nil
         displayedTask = nil
         fadeRegions.removeAll()
+    }
+
+    private func tileRect(containing visibleRect: CGRect) -> CGRect {
+        guard !visibleRect.isEmpty, !visibleRect.isNull,
+              maximumTileSize.width > 0, maximumTileSize.height > 0 else { return .zero }
+        let minX = max(0, floor(visibleRect.minX / maximumTileSize.width)) * maximumTileSize.width
+        let minY = max(0, floor(visibleRect.minY / maximumTileSize.height)) * maximumTileSize.height
+        let maxX = min(bounds.width, ceil(visibleRect.maxX / maximumTileSize.width) * maximumTileSize.width)
+        let maxY = min(bounds.height, ceil(visibleRect.maxY / maximumTileSize.height) * maximumTileSize.height)
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    private func displayViewportTiles(
+        task: RichRenderLayerDisplayTask,
+        display: @escaping (CGContext, CGSize, () -> Bool) -> Void,
+        size: CGSize,
+        scale: CGFloat,
+        visibleContentRect: CGRect,
+        visibleTileRect: CGRect,
+        capturedGuard: UInt
+    ) {
+        guard !visibleContentRect.isEmpty, !visibleTileRect.isEmpty else {
+            tiledLayerContainer?.sublayers = []
+            return
+        }
+        let prefix = displayedScale == scale ? task.unchangedPrefixHeight(comparedTo: displayedTask) : 0
+        let oldTiles = tiledLayerContainer?.sublayers ?? []
+        let rects = tileRects(in: visibleTileRect, size: size)
+        var reused: [Int: CALayer] = [:]
+        for (index, rect) in rects.enumerated() where rect.maxY <= prefix {
+            if let tile = oldTiles.first(where: { $0.frame == rect }) { reused[index] = tile }
+        }
+        let renderTile = { [weak self] (rect: CGRect) -> CGImage? in
+            guard let self else { return nil }
+            let isCancelled = { [weak self] in self?.currentGuardValue() != capturedGuard }
+            guard !isCancelled() else { return nil }
+            let image = Self.renderImage(size: rect.size, scale: scale) { context in
+                context.translateBy(x: -rect.minX, y: -(size.height - rect.maxY))
+                display(context, size, isCancelled)
+            }
+            return isCancelled() ? nil : image
+        }
+
+        var visibleImages: [Int: CGImage] = [:]
+        for index in rects.indices where reused[index] == nil {
+            let rect = rects[index]
+            guard let image = renderTile(rect) else { return }
+            visibleImages[index] = image
+        }
+        guard currentGuardValue() == capturedGuard else { return }
+
+        updateFadeRegions(for: task)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let container = tiledLayerContainer ?? CALayer()
+        container.frame = CGRect(origin: .zero, size: size)
+        var installed: [CALayer] = []
+        for (index, rect) in rects.enumerated() {
+            if let tile = reused[index] {
+                applyFadeMask(to: tile)
+                installed.append(tile)
+            } else if let image = visibleImages[index] {
+                let tile = makeTile(image: image, frame: rect, scale: scale)
+                installed.append(tile)
+            }
+        }
+        container.sublayers = installed
+        if container.superlayer == nil { insertSublayer(container, at: 0) }
+        tiledLayerContainer = container
+        contents = nil
+        displayedTask = task
+        displayedScale = scale
+        CATransaction.commit()
+    }
+
+    private func tileRects(in rect: CGRect, size: CGSize) -> [CGRect] {
+        var result: [CGRect] = []
+        var y = rect.minY
+        while y < rect.maxY {
+            var x = rect.minX
+            while x < rect.maxX {
+                result.append(CGRect(
+                    x: x,
+                    y: y,
+                    width: min(maximumTileSize.width, size.width - x),
+                    height: min(maximumTileSize.height, size.height - y)
+                ))
+                x += maximumTileSize.width
+            }
+            y += maximumTileSize.height
+        }
+        return result
+    }
+
+    private func makeTile(image: CGImage, frame: CGRect, scale: CGFloat) -> CALayer {
+        let tile = CALayer()
+        tile.frame = frame
+        tile.contentsScale = scale
+        tile.contents = image
+        applyFadeMask(to: tile)
+        return tile
+    }
+
+    private func updateFadeRegions(for task: RichRenderLayerDisplayTask) {
+        let now = CACurrentMediaTime()
+        if task.animatesStreamingChanges, let appended = task.appendedTextRects(comparedTo: displayedTask) {
+            fadeRegions.removeAll { now - $0.start >= fadeDuration }
+            for (index, rect) in appended.enumerated() {
+                fadeRegions.append((rect, now + 0.1 * Double(index) / Double(max(1, appended.count))))
+            }
+        } else {
+            fadeRegions.removeAll()
+        }
     }
 
     private func applyFadeMask(to tile: CALayer) {

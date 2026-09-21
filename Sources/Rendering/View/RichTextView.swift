@@ -124,6 +124,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
     private weak var activeSelectionTouch: UITouch?
     private var selectionTouchStartPoint: CGPoint?
     private var didMoveSelectionTouch = false
+    private var viewportObservations: [NSKeyValueObservation] = []
 
     // swiftlint:disable:next force_cast
     private var renderLayer: RichRenderLayer { layer as! RichRenderLayer }
@@ -297,6 +298,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         synchronizeImageLoads()
         selectionController.apply(layout: layout)
         updateAccessibility(using: layout)
+        refreshRenderViewportObservation()
         renderLayer.setNeedsDisplay()
         invalidateIntrinsicContentSize()
     }
@@ -356,6 +358,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
 
     public override func layoutSubviews() {
         super.layoutSubviews()
+        refreshRenderViewportObservation()
         guard !usesPrecomputedLayout,
               bounds.width > 0,
               abs(bounds.width - lastLayoutWidth) > 0.5 else { return }
@@ -366,6 +369,16 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         } else if let currentSnapshot {
             scheduleLayout(for: currentSnapshot)
         }
+    }
+
+    public override func didMoveToWindow() {
+        super.didMoveToWindow()
+        observeRenderViewport()
+    }
+
+    public override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        observeRenderViewport()
     }
 
     public override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -605,6 +618,46 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         renderLayer.displaysAsynchronously = false
         renderLayer.needsDisplayOnBoundsChange = true
         selectionController.isEnabled = isTextSelectionEnabled
+    }
+
+    private func refreshRenderViewportObservation() {
+        let shouldObserve = window != nil && renderLayer.mayNeedViewport
+        if shouldObserve != !viewportObservations.isEmpty {
+            observeRenderViewport()
+        } else {
+            updateRenderViewport()
+        }
+    }
+
+    private func observeRenderViewport() {
+        viewportObservations.removeAll()
+        if window != nil && renderLayer.mayNeedViewport {
+            var ancestor = superview
+            while let view = ancestor {
+                viewportObservations.append(view.observe(\.bounds, options: [.new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.updateRenderViewport() }
+                })
+                viewportObservations.append(view.observe(\.frame, options: [.new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.updateRenderViewport() }
+                })
+                ancestor = view.superview
+            }
+        }
+        updateRenderViewport()
+    }
+
+    private func updateRenderViewport() {
+        guard renderLayer.mayNeedViewport, let window else { return }
+        var viewportRect = convert(window.bounds, from: window)
+        var ancestor = superview
+        while let view = ancestor {
+            if view.clipsToBounds {
+                viewportRect = viewportRect.intersection(convert(view.bounds, from: view))
+            }
+            ancestor = view.superview
+        }
+        let visibleRect = bounds.intersection(viewportRect)
+        renderLayer.updateVisibleRect(visibleRect, viewportHeight: viewportRect.height)
     }
 
     private func synchronizeImageLoads() {
