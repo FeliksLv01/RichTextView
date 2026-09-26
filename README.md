@@ -49,13 +49,13 @@ import RichTextViewMarkdown
 ## CocoaPods
 
 ```ruby
-pod 'RichTextView', '0.1.1'
+pod 'RichTextView', :git => 'https://github.com/FeliksLv01/RichTextView.git', :tag => '0.1.4'
 ```
 
 Add the Markdown input adapter only when needed:
 
 ```ruby
-pod 'RichTextView/Markdown', '0.1.1'
+pod 'RichTextView/Markdown', :git => 'https://github.com/FeliksLv01/RichTextView.git', :tag => '0.1.4'
 ```
 
 The parser, syntax highlighting, and math renderer consume pinned static

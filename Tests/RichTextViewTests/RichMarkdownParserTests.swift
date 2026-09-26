@@ -92,6 +92,30 @@ final class RichMarkdownParserTests: XCTestCase {
         XCTAssertEqual(flattenElements(invalidFinal.root).compactMap { $0 as? RichLatexElement }.count, 1)
     }
 
+    func testCachedLatexLayoutUsesCurrentAppearanceWhenDrawing() throws {
+        let color = UIColor { traits in traits.userInterfaceStyle == .dark ? .green : .red }
+        let layout = try XCTUnwrap(RichLatexLayout(latex: "x", pointSize: 24, isBlock: false, color: color))
+        let width = Int(ceil(layout.size.width))
+        let height = Int(ceil(layout.size.height))
+
+        func draw(using style: UIUserInterfaceStyle) throws -> (red: Int, green: Int) {
+            let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            UITraitCollection(userInterfaceStyle: style).performAsCurrent {
+                layout.draw(in: context)
+            }
+            let pixels = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+            return (red: stride(from: 0, to: width * height * 4, by: 4).reduce(0) { $0 + Int(pixels[$1]) },
+                    green: stride(from: 0, to: width * height * 4, by: 4).reduce(0) { $0 + Int(pixels[$1 + 1]) })
+        }
+
+        let light = try draw(using: .light)
+        let dark = try draw(using: .dark)
+        XCTAssertGreaterThan(light.red, light.green)
+        XCTAssertGreaterThan(dark.green, dark.red)
+    }
+
     @MainActor
     func testBoxedBlockLatexHeightIsFullyMeasured() throws {
         let renderer = RichContentRenderer()

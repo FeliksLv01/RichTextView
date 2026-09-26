@@ -20,7 +20,7 @@ public final class RichLatexElementBuilder: RichContentElementBuilding {
         lock.lock()
         defer { lock.unlock() }
         let key = Key(latex: content.latex, pointSize: context.configuration.font.pointSize,
-                      isBlock: content.isBlock, color: context.configuration.textColor.resolvedColor(with: .current))
+                      isBlock: content.isBlock, color: context.configuration.textColor)
         if let layout = layouts[key] {
             return RichLatexElement(id: node.id, latex: key.latex, isBlock: key.isBlock, layout: layout)
         }

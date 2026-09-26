@@ -33,6 +33,7 @@ final class RichLatexLayout: @unchecked Sendable {
     let size: CGSize
     let ascent: CGFloat
     let descent: CGFloat
+    private let color: UIColor
     private let display: MTMathListDisplay
     // ponytail: serialize drawing of iosMath's mutable display graph; no shared mutation escapes this object.
     private let drawLock = NSLock()
@@ -40,8 +41,8 @@ final class RichLatexLayout: @unchecked Sendable {
     init?(latex: String, pointSize: CGFloat, isBlock: Bool, color: UIColor) {
         guard let list = MTMathListBuilder.build(from: latex),
               let font = MTFontManager.fontManager.font(withName: MTFontNameLatinModern, size: pointSize) else { return nil }
+        self.color = color
         display = MTTypesetter.createLine(for: list, font: font, style: isBlock ? .display : .text)
-        display.textColor = color
         ascent = ceil(display.ascent) + 1
         descent = ceil(display.descent) + 1
         size = CGSize(width: ceil(display.width), height: ascent + descent)
@@ -50,6 +51,7 @@ final class RichLatexLayout: @unchecked Sendable {
     func draw(in context: CGContext) {
         drawLock.lock()
         defer { drawLock.unlock() }
+        display.textColor = color.resolvedColor(with: .current)
         display.draw(context)
     }
 }
