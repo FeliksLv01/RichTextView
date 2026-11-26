@@ -105,7 +105,7 @@ public struct RichMarkdownParser {
             let (child, marked) = markingLastCodeBlockStreaming(in: children[index])
             guard marked else { continue }
             children[index] = child
-            return (RichContentNode(id: node.id, type: node.type, content: node.content, children: children), true)
+            return (RichContentNode(id: node.id, type: node.type, content: node.content, children: children, action: node.action), true)
         }
         guard node.type == .codeBlock else { return (node, false) }
         let content = node.content(as: RichCodeBlockContent.self) ?? RichCodeBlockContent()
@@ -114,7 +114,8 @@ public struct RichMarkdownParser {
                 id: node.id,
                 type: node.type,
                 content: RichCodeBlockContent(language: content.language, isStreaming: true),
-                children: children
+                children: children,
+                action: node.action
             ),
             true
         )

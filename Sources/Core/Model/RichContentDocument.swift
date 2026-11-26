@@ -20,18 +20,25 @@ public struct RichContentNode: Sendable {
     public let type: RichContentNodeType
     public let content: any RichContentNodeContent
     public let children: [RichContentNode]
+    public let action: RichAction?
+
+    public init(id: String, type: RichContentNodeType, content: any RichContentNodeContent, children: [RichContentNode]) {
+        self.init(id: id, type: type, content: content, children: children, action: nil)
+    }
 
     public init(
         id: String,
         type: RichContentNodeType,
         content: any RichContentNodeContent = RichEmptyContent(),
-        children: [RichContentNode] = []
+        children: [RichContentNode] = [],
+        action: RichAction? = nil
     ) {
         precondition(!id.isEmpty, "Rich content node ID must not be empty")
         self.id = id
         self.type = type
         self.content = content
         self.children = children
+        self.action = action
     }
 
     public func content<Content: RichContentNodeContent>(as type: Content.Type = Content.self) -> Content? {

@@ -1,4 +1,4 @@
-import CoreGraphics
+import Foundation
 import Markdown
 #if SWIFT_PACKAGE
 import RichTextView
@@ -22,7 +22,8 @@ public final class RichMarkdownLinkConverter: RichMarkdownNodeConverting {
                 title: link.title ?? "",
                 icon: ""
             ),
-            children: children
+            children: children,
+            action: link.destination.flatMap { URL(string: $0) }.map { RichAction(.link($0)) }
         )]
     }
 }

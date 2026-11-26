@@ -87,7 +87,8 @@ public struct RichContentDocumentRevealProjector {
             return RichContentNode(
                 id: node.id,
                 type: node.type,
-                content: RichTextContent(text: String(text.text.prefix(visibleCount)), style: text.style)
+                content: RichTextContent(text: String(text.text.prefix(visibleCount)), style: text.style),
+                action: node.action
             )
         }
         if node.children.isEmpty {
@@ -109,7 +110,8 @@ public struct RichContentDocumentRevealProjector {
             id: node.id,
             type: node.type,
             content: node.content,
-            children: children
+            children: children,
+            action: node.action
         )
     }
 }
