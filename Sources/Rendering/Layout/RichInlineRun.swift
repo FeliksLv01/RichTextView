@@ -32,8 +32,13 @@ final class RichInlineImageAttachment: Sendable {
     }
 }
 
-final class RichInlineTextBadge: Sendable {
-    let line: CTLine
+final class RichInlineTextBadge: @unchecked Sendable {
+    private let attributedText: NSAttributedString
+    private let originThreadID = UInt(bitPattern: pthread_self())
+    private let originLine: CTLine
+    private let lock = NSLock()
+    private var secondaryLine: (threadID: UInt, line: CTLine)?
+
     let backgroundColor: UIColor
     let contentInsets: UIEdgeInsets
     let outerInsets: UIEdgeInsets
@@ -65,11 +70,12 @@ final class RichInlineTextBadge: Sendable {
         self.cornerRadius = max(0, cornerRadius)
         self.borderColor = borderColor
         self.borderWidth = max(0, borderWidth)
-        line = CTLineCreateWithAttributedString(mutableText)
+        self.attributedText = mutableText.copy() as! NSAttributedString
+        originLine = CTLineCreateWithAttributedString(self.attributedText)
         var ascent: CGFloat = 0
         var descent: CGFloat = 0
         var leading: CGFloat = 0
-        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        let width = CGFloat(CTLineGetTypographicBounds(originLine, &ascent, &descent, &leading))
         textDescent = descent
         let naturalAscent = ascent + leading + contentInsets.top + outerInsets.top
         let naturalDescent = descent + contentInsets.bottom + outerInsets.bottom
@@ -79,6 +85,18 @@ final class RichInlineTextBadge: Sendable {
             width: ceil(width) + contentInsets.left + contentInsets.right + outerInsets.left + outerInsets.right,
             height: self.ascent + self.descent
         )
+    }
+
+    func lineForCurrentThread() -> CTLine {
+        let threadID = UInt(bitPattern: pthread_self())
+        if threadID == originThreadID { return originLine }
+        if let cached = lock.withLock({ secondaryLine?.threadID == threadID ? secondaryLine?.line : nil }) {
+            return cached
+        }
+
+        let line = CTLineCreateWithAttributedString(attributedText)
+        lock.withLock { secondaryLine = (threadID, line) }
+        return line
     }
 }
 

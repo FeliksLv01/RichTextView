@@ -356,7 +356,7 @@ final class RichRenderLayer: CALayer {
     }
 
     private func updateStrips(in rect: CGRect, task: RichRenderLayerDisplayTask, redraw: Bool) {
-        guard let display = task.display else { return }
+        guard task.display != nil else { return }
         let size = bounds.size
         let documentBounds = CGRect(origin: .zero, size: size)
         let keep = documentBounds.intersection(rect.insetBy(dx: 0, dy: -rect.height))

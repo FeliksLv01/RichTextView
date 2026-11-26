@@ -3,7 +3,6 @@ import UIKit
 
 final class RichCoreTextLayout: @unchecked Sendable {
     struct LineFragment: Sendable {
-        let line: CTLine
         let range: NSRange
         let frame: CGRect
         let coreTextOrigin: CGPoint
@@ -15,6 +14,30 @@ final class RichCoreTextLayout: @unchecked Sendable {
     let size: CGSize
     let lines: [LineFragment]
 
+    private let constrainedWidth: CGFloat
+    private let maximumNumberOfLines: Int
+    private let lineBreakMode: NSLineBreakMode
+    private let originThreadID = UInt(bitPattern: pthread_self())
+    private let originLines: [CTLine]
+    private let lock = NSLock()
+    private var secondaryLines: (threadID: UInt, lines: [CTLine])?
+
+    private typealias DrawingLine = (fragment: LineFragment, line: CTLine)
+
+    // 可见高度取截断前的行度量，实际绘制与命中测试使用截断后的行。
+    private struct TypesetLines {
+        let ordered: [(line: CTLine, origin: CGPoint)]
+        let truncatedLastLine: CTLine?
+        let frameHeight: CGFloat
+        let suggestedWidth: CGFloat
+
+        var visibleLines: [CTLine] {
+            var lines = ordered.map(\.line)
+            if let truncatedLastLine { lines[lines.count - 1] = truncatedLastLine }
+            return lines
+        }
+    }
+
     init?(
         attributedText: NSAttributedString,
         constrainedWidth: CGFloat,
@@ -23,21 +46,83 @@ final class RichCoreTextLayout: @unchecked Sendable {
     ) {
         guard attributedText.length > 0, constrainedWidth > 0 else { return nil }
         self.attributedText = attributedText.copy() as! NSAttributedString
-        let framesetter = CTFramesetterCreateWithAttributedString(self.attributedText)
-        // 不折行模式（.byClipping）：用超大宽度排版让长行不换行，输出真实内容宽度（可超出约束宽度），
-        // 供外层横向滚动承载。其余模式沿用约束宽度排版与 clamp。
-        let isNonWrapping = lineBreakMode == .byClipping
-        let layoutWidth = isNonWrapping ? 100_000 : min(100_000, constrainedWidth)
-        let safeWidth = layoutWidth
+        self.constrainedWidth = constrainedWidth
+        self.maximumNumberOfLines = maximumNumberOfLines
+        self.lineBreakMode = lineBreakMode
+        let width = Self.layoutWidth(constrainedWidth, lineBreakMode)
+        let typeset = Self.typeset(
+            self.attributedText, width: width,
+            maximumNumberOfLines: maximumNumberOfLines, lineBreakMode: lineBreakMode
+        )
+        let visibleLines = typeset.visibleLines
+        originLines = visibleLines
+
+        let visibleHeight = ceil(typeset.ordered.map { raw in
+            var descent: CGFloat = 0
+            var leading: CGFloat = 0
+            CTLineGetTypographicBounds(raw.line, nil, &descent, &leading)
+            return typeset.frameHeight - raw.origin.y + descent + leading
+        }.max() ?? 0)
+        lines = typeset.ordered.enumerated().map { index, raw in
+            let line = visibleLines[index]
+            let originalRange = CTLineGetStringRange(raw.line)
+            let sourceRange = NSRange(location: originalRange.location, length: originalRange.length)
+            let isTruncated = index == visibleLines.count - 1 && typeset.truncatedLastLine != nil
+            let range = isTruncated
+                ? Self.visibleSourceRange(in: line, sourceOffset: sourceRange.location, fallback: sourceRange)
+                : sourceRange
+            var ascent: CGFloat = 0
+            var descent: CGFloat = 0
+            var leading: CGFloat = 0
+            let lineWidth = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+            let y = max(0, typeset.frameHeight - raw.origin.y - ascent)
+            return LineFragment(
+                range: range,
+                frame: CGRect(x: raw.origin.x, y: y, width: ceil(min(width, lineWidth)), height: ascent + descent + leading),
+                coreTextOrigin: CGPoint(x: raw.origin.x, y: visibleHeight - y - ascent),
+                stringIndexOffset: isTruncated ? sourceRange.location : 0
+            )
+        }
+        let measuredWidth = lines.map(\.frame.maxX).max() ?? typeset.suggestedWidth
+        size = CGSize(width: min(width, ceil(measuredWidth)), height: visibleHeight)
+    }
+
+    func linesForCurrentThread() -> [CTLine] {
+        let threadID = UInt(bitPattern: pthread_self())
+        if threadID == originThreadID { return originLines }
+        if let cached = lock.withLock({ secondaryLines?.threadID == threadID ? secondaryLines?.lines : nil }) {
+            return cached
+        }
+
+        let lines = Self.typeset(
+            attributedText, width: Self.layoutWidth(constrainedWidth, lineBreakMode),
+            maximumNumberOfLines: maximumNumberOfLines, lineBreakMode: lineBreakMode
+        ).visibleLines
+        lock.withLock { secondaryLines = (threadID, lines) }
+        return lines
+    }
+
+    private static func layoutWidth(_ constrainedWidth: CGFloat, _ lineBreakMode: NSLineBreakMode) -> CGFloat {
+        // 不折行模式保留实际内容宽度，供外层横向滚动。
+        lineBreakMode == .byClipping ? 100_000 : min(100_000, constrainedWidth)
+    }
+
+    private static func typeset(
+        _ attributedText: NSAttributedString,
+        width: CGFloat,
+        maximumNumberOfLines: Int,
+        lineBreakMode: NSLineBreakMode
+    ) -> TypesetLines {
+        let framesetter = CTFramesetterCreateWithAttributedString(attributedText)
         let suggested = CTFramesetterSuggestFrameSizeWithConstraints(
             framesetter,
             CFRange(location: 0, length: attributedText.length),
             nil,
-            CGSize(width: safeWidth, height: 100_000),
+            CGSize(width: width, height: 100_000),
             nil
         )
         let fullHeight = max(1, ceil(suggested.height))
-        let path = CGPath(rect: CGRect(x: 0, y: 0, width: safeWidth, height: fullHeight), transform: nil)
+        let path = CGPath(rect: CGRect(x: 0, y: 0, width: width, height: fullHeight), transform: nil)
         let frame = CTFramesetterCreateFrame(
             framesetter,
             CFRange(location: 0, length: attributedText.length),
@@ -54,81 +139,16 @@ final class RichCoreTextLayout: @unchecked Sendable {
             }
             return first.1.y > second.1.y
         }
-        let rawFragments = orderedLines.prefix(lineLimit).map { line, origin in
-            var ascent: CGFloat = 0
-            var descent: CGFloat = 0
-            var leading: CGFloat = 0
-            let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
-            let range = CTLineGetStringRange(line)
-            return (
-                line: line,
-                range: NSRange(location: range.location, length: range.length),
-                origin: origin,
-                ascent: ascent,
-                descent: descent,
-                leading: leading,
-                width: width
-            )
+        let ordered: [(line: CTLine, origin: CGPoint)] = Array(orderedLines.prefix(lineLimit))
+        var truncatedLastLine: CTLine?
+        if allLines.count > lineLimit, let last = ordered.last, let type = truncationType(for: lineBreakMode) {
+            let start = CTLineGetStringRange(last.line).location
+            let remaining = attributedText.attributedSubstring(from: NSRange(location: start, length: attributedText.length - start))
+            let candidate = CTLineCreateWithAttributedString(remaining)
+            let token = truncationToken(for: attributedText, location: start)
+            truncatedLastLine = CTLineCreateTruncatedLine(candidate, Double(width), type, token)
         }
-        let visibleHeight = ceil(rawFragments.map {
-            fullHeight - $0.origin.y + $0.descent + $0.leading
-        }.max() ?? 0)
-        let shouldTruncate = maximumNumberOfLines > 0
-            && lineLimit > 0
-            && allLines.count > lineLimit
-            && Self.truncationType(for: lineBreakMode) != nil
-        var fragments: [LineFragment] = []
-        for (index, raw) in rawFragments.enumerated() {
-            var line = raw.line
-            var range = raw.range
-            var stringIndexOffset = 0
-            if shouldTruncate,
-               index == rawFragments.count - 1,
-               let truncationType = Self.truncationType(for: lineBreakMode) {
-                let remainingRange = NSRange(
-                    location: raw.range.location,
-                    length: self.attributedText.length - raw.range.location
-                )
-                let remainingText = self.attributedText.attributedSubstring(from: remainingRange)
-                let candidate = CTLineCreateWithAttributedString(remainingText)
-                let token = Self.truncationToken(
-                    for: self.attributedText,
-                    location: raw.range.location
-                )
-                if let truncated = CTLineCreateTruncatedLine(candidate, Double(safeWidth), truncationType, token) {
-                    line = truncated
-                    range = Self.visibleSourceRange(
-                        in: truncated,
-                        sourceOffset: raw.range.location,
-                        fallback: raw.range
-                    )
-                    stringIndexOffset = raw.range.location
-                }
-            }
-            var ascent: CGFloat = 0
-            var descent: CGFloat = 0
-            var leading: CGFloat = 0
-            let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
-            let y = max(0, fullHeight - raw.origin.y - ascent)
-            fragments.append(LineFragment(
-                line: line,
-                range: range,
-                frame: CGRect(
-                    x: raw.origin.x,
-                    y: y,
-                    width: ceil(min(safeWidth, width)),
-                    height: ascent + descent + leading
-                ),
-                coreTextOrigin: CGPoint(
-                    x: raw.origin.x,
-                    y: visibleHeight - y - ascent
-                ),
-                stringIndexOffset: stringIndexOffset
-            ))
-        }
-        lines = fragments
-        let measuredWidth = fragments.map(\.frame.maxX).max() ?? min(safeWidth, ceil(suggested.width))
-        size = CGSize(width: min(safeWidth, ceil(measuredWidth)), height: visibleHeight)
+        return TypesetLines(ordered: ordered, truncatedLastLine: truncatedLastLine, frameHeight: fullHeight, suggestedWidth: suggested.width)
     }
 
     func draw(
@@ -145,12 +165,12 @@ final class RichCoreTextLayout: @unchecked Sendable {
         context.clip(to: CGRect(origin: .zero, size: size))
         let clip = context.boundingBoxOfClipPath
         let visibleRect = CGRect(x: clip.minX, y: size.height - clip.maxY, width: clip.width, height: clip.height)
-        let visibleLines = lines.filter { $0.frame.intersects(visibleRect) }
+        let visibleLines = zip(lines, linesForCurrentThread()).filter { $0.0.frame.intersects(visibleRect) }
         drawRunBackgrounds(in: context, lines: visibleLines, isCancelled: isCancelled)
-        for line in visibleLines {
+        for (line, ctLine) in visibleLines {
             guard !isCancelled() else { break }
             context.textPosition = line.coreTextOrigin
-            CTLineDraw(line.line, context)
+            CTLineDraw(ctLine, context)
         }
         drawLatex(in: context, lines: visibleLines, isCancelled: isCancelled)
         drawInlineTextBadges(in: context, lines: visibleLines, isCancelled: isCancelled)
@@ -183,45 +203,46 @@ final class RichCoreTextLayout: @unchecked Sendable {
     }
 
     func closestPosition(to point: CGPoint) -> Int? {
-        guard let line = closestLine(to: point) else { return nil }
+        guard let index = closestLineIndex(to: point) else { return nil }
+        let line = lines[index]
         let relative = CGPoint(x: max(0, point.x - line.frame.minX), y: 0)
-        let index = CTLineGetStringIndexForPosition(line.line, relative)
-        guard index != kCFNotFound else { return NSMaxRange(line.range) }
-        let sourceIndex = line.stringIndexOffset + index
+        let position = CTLineGetStringIndexForPosition(linesForCurrentThread()[index], relative)
+        guard position != kCFNotFound else { return NSMaxRange(line.range) }
+        let sourceIndex = line.stringIndexOffset + position
         return min(NSMaxRange(line.range), max(line.range.location, sourceIndex))
     }
 
     func lineRange(at point: CGPoint) -> NSRange? {
-        closestLine(to: point)?.range
+        closestLineIndex(to: point).map { lines[$0].range }
     }
 
     func paragraphRange(at point: CGPoint) -> NSRange? {
-        guard let line = closestLine(to: point),
+        guard let lineRange = lineRange(at: point),
               let position = closestPosition(to: point) else { return nil }
         let string = attributedText.string as NSString
         guard string.length > 0 else { return nil }
-        let index = min(max(line.range.location, position), NSMaxRange(line.range) - 1)
+        let index = min(max(lineRange.location, position), NSMaxRange(lineRange) - 1)
         var range = string.paragraphRange(for: NSRange(location: index, length: 0))
         while range.length > 0,
               let scalar = UnicodeScalar(string.character(at: NSMaxRange(range) - 1)),
               CharacterSet.newlines.contains(scalar) {
             range.length -= 1
         }
-        return range.length > 0 ? range : line.range
+        return range.length > 0 ? range : lineRange
     }
 
     /// ICU 按词切分（与系统文本选择一致，中文为词粒度而非标点间整句）；
     /// 点位不在任何词上时回落到该处的 composed character。
     func wordRange(at point: CGPoint) -> NSRange? {
-        guard let line = closestLine(to: point),
+        guard let lineRange = lineRange(at: point),
               let position = closestPosition(to: point) else { return nil }
         let string = attributedText.string as NSString
         guard string.length > 0 else { return nil }
-        let index = min(max(line.range.location, position), NSMaxRange(line.range) - 1)
+        let index = min(max(lineRange.location, position), NSMaxRange(lineRange) - 1)
         guard index >= 0, index < string.length else { return nil }
         var match: NSRange?
         string.enumerateSubstrings(
-            in: line.range,
+            in: lineRange,
             options: [.byWords, .substringNotRequired]
         ) { _, wordRange, _, stop in
             if NSLocationInRange(index, wordRange) {
@@ -235,16 +256,16 @@ final class RichCoreTextLayout: @unchecked Sendable {
     }
 
     func selectionRects(for range: NSRange) -> [CGRect] {
-        lines.compactMap { line in
+        zip(lines, linesForCurrentThread()).compactMap { line, ctLine in
             let intersection = NSIntersectionRange(range, line.range)
             guard intersection.length > 0 else { return nil }
             let start = CGFloat(CTLineGetOffsetForStringIndex(
-                line.line,
+                ctLine,
                 intersection.location - line.stringIndexOffset,
                 nil
             ))
             let end = CGFloat(CTLineGetOffsetForStringIndex(
-                line.line,
+                ctLine,
                 NSMaxRange(intersection) - line.stringIndexOffset,
                 nil
             ))
@@ -260,8 +281,8 @@ final class RichCoreTextLayout: @unchecked Sendable {
     /// A logical range can occupy disjoint visual runs in bidirectional or truncated text.
     func interactiveRects(for range: NSRange) -> [CGRect] {
         var rects: [CGRect] = []
-        for line in lines where NSIntersectionRange(line.range, range).length > 0 {
-            let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
+        for (line, ctLine) in zip(lines, linesForCurrentThread()) where NSIntersectionRange(line.range, range).length > 0 {
+            let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] ?? []
             let spans = runs.compactMap { run -> CGRect? in
                 let attributes = CTRunGetAttributes(run) as NSDictionary
                 guard attributes[RichCoreTextAttribute.truncationToken] == nil else { return nil }
@@ -280,7 +301,7 @@ final class RichCoreTextLayout: @unchecked Sendable {
                     if index == source.location { return isRTL ? right : left }
                     if index == NSMaxRange(source) { return isRTL ? left : right }
                     var secondary: CGFloat = 0
-                    let primary = CTLineGetOffsetForStringIndex(line.line, index - line.stringIndexOffset, &secondary)
+                    let primary = CTLineGetOffsetForStringIndex(ctLine, index - line.stringIndexOffset, &secondary)
                     return (left...right).contains(primary) ? primary : min(right, max(left, secondary))
                 }
 
@@ -307,8 +328,8 @@ final class RichCoreTextLayout: @unchecked Sendable {
     }
 
     func inlineRunRect(at location: Int) -> CGRect? {
-        for line in lines where NSLocationInRange(location, line.range) {
-            let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
+        for (line, ctLine) in zip(lines, linesForCurrentThread()) where NSLocationInRange(location, line.range) {
+            let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] ?? []
             for run in runs {
                 let runRange = CTRunGetStringRange(run)
                 let sourceRange = NSRange(
@@ -322,7 +343,7 @@ final class RichCoreTextLayout: @unchecked Sendable {
                 var lineDescent: CGFloat = 0
                 var lineLeading: CGFloat = 0
                 CTLineGetTypographicBounds(
-                    line.line,
+                    ctLine,
                     &lineAscent,
                     &lineDescent,
                     &lineLeading
@@ -338,7 +359,7 @@ final class RichCoreTextLayout: @unchecked Sendable {
                 ))
                 let x = line.frame.minX + CGFloat(
                     CTLineGetOffsetForStringIndex(
-                        line.line,
+                        ctLine,
                         runRange.location,
                         nil
                     )
@@ -354,11 +375,11 @@ final class RichCoreTextLayout: @unchecked Sendable {
         return nil
     }
 
-    private func closestLine(to point: CGPoint) -> LineFragment? {
-        if let contained = lines.first(where: { $0.frame.insetBy(dx: 0, dy: -4).contains(point) }) {
+    private func closestLineIndex(to point: CGPoint) -> Int? {
+        if let contained = lines.firstIndex(where: { $0.frame.insetBy(dx: 0, dy: -4).contains(point) }) {
             return contained
         }
-        return lines.min { abs($0.frame.midY - point.y) < abs($1.frame.midY - point.y) }
+        return lines.indices.min { abs(lines[$0].frame.midY - point.y) < abs(lines[$1].frame.midY - point.y) }
     }
 
     private static func truncationType(for lineBreakMode: NSLineBreakMode) -> CTLineTruncationType? {
@@ -397,20 +418,20 @@ final class RichCoreTextLayout: @unchecked Sendable {
 
     private func drawInlineImages(
         in context: CGContext,
-        lines: [LineFragment],
+        lines: [DrawingLine],
         imageResolver: ((String) -> UIImage?)?,
         isCancelled: () -> Bool
     ) {
-        for line in lines {
+        for (line, ctLine) in lines {
             guard !isCancelled() else { return }
-            let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
+            let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] ?? []
             for run in runs {
                 guard let attachment = (CTRunGetAttributes(run) as NSDictionary)[RichCoreTextAttribute.inlineImage]
                     as? RichInlineImageAttachment,
                     let image = (imageResolver?(attachment.identifier) ?? attachment.image)?.cgImage else { continue }
                 let runRange = CTRunGetStringRange(run)
                 let x = line.coreTextOrigin.x
-                    + CGFloat(CTLineGetOffsetForStringIndex(line.line, runRange.location, nil))
+                    + CGFloat(CTLineGetOffsetForStringIndex(ctLine, runRange.location, nil))
                 var ascent: CGFloat = 0
                 var descent: CGFloat = 0
                 let width = CGFloat(CTRunGetTypographicBounds(
@@ -441,13 +462,13 @@ final class RichCoreTextLayout: @unchecked Sendable {
         }
     }
 
-    private func drawLatex(in context: CGContext, lines: [LineFragment], isCancelled: () -> Bool) {
-        for line in lines {
+    private func drawLatex(in context: CGContext, lines: [DrawingLine], isCancelled: () -> Bool) {
+        for (line, ctLine) in lines {
             guard !isCancelled() else { return }
-            for run in CTLineGetGlyphRuns(line.line) as? [CTRun] ?? [] {
+            for run in CTLineGetGlyphRuns(ctLine) as? [CTRun] ?? [] {
                 guard let latex = (CTRunGetAttributes(run) as NSDictionary)[RichLatexRun.attribute] as? RichLatexRun else { continue }
                 let range = CTRunGetStringRange(run)
-                let x = line.coreTextOrigin.x + CGFloat(CTLineGetOffsetForStringIndex(line.line, range.location, nil))
+                let x = line.coreTextOrigin.x + CGFloat(CTLineGetOffsetForStringIndex(ctLine, range.location, nil))
                 let rect = CGRect(x: x, y: line.coreTextOrigin.y - latex.descent, width: latex.width, height: latex.ascent + latex.descent)
                 guard rect.intersects(context.boundingBoxOfClipPath) else { continue }
                 latex.draw(in: context, baseline: CGPoint(x: x, y: line.coreTextOrigin.y))
@@ -455,16 +476,16 @@ final class RichCoreTextLayout: @unchecked Sendable {
         }
     }
 
-    private func drawInlineTextBadges(in context: CGContext, lines: [LineFragment], isCancelled: () -> Bool) {
-        for line in lines {
+    private func drawInlineTextBadges(in context: CGContext, lines: [DrawingLine], isCancelled: () -> Bool) {
+        for (line, ctLine) in lines {
             guard !isCancelled() else { return }
-            let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
+            let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] ?? []
             for run in runs {
                 guard let badge = (CTRunGetAttributes(run) as NSDictionary)[RichCoreTextAttribute.inlineTextBadge]
                     as? RichInlineTextBadge else { continue }
                 let runRange = CTRunGetStringRange(run)
                 let x = line.coreTextOrigin.x
-                    + CGFloat(CTLineGetOffsetForStringIndex(line.line, runRange.location, nil))
+                    + CGFloat(CTLineGetOffsetForStringIndex(ctLine, runRange.location, nil))
                 var ascent: CGFloat = 0
                 var descent: CGFloat = 0
                 let width = CGFloat(CTRunGetTypographicBounds(
@@ -509,21 +530,21 @@ final class RichCoreTextLayout: @unchecked Sendable {
                     x: badgeRect.minX + badge.contentInsets.left,
                     y: badgeRect.minY + badge.contentInsets.bottom + badge.textDescent
                 )
-                CTLineDraw(badge.line, context)
+                CTLineDraw(badge.lineForCurrentThread(), context)
             }
         }
     }
 
-    private func drawRunBackgrounds(in context: CGContext, lines: [LineFragment], isCancelled: () -> Bool) {
-        for line in lines {
+    private func drawRunBackgrounds(in context: CGContext, lines: [DrawingLine], isCancelled: () -> Bool) {
+        for (line, ctLine) in lines {
             guard !isCancelled() else { return }
-            let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
+            let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] ?? []
             for run in runs {
                 guard let color = (CTRunGetAttributes(run) as NSDictionary)[NSAttributedString.Key.backgroundColor]
                     as? UIColor else { continue }
                 let runRange = CTRunGetStringRange(run)
                 let x = line.coreTextOrigin.x
-                    + CGFloat(CTLineGetOffsetForStringIndex(line.line, runRange.location, nil))
+                    + CGFloat(CTLineGetOffsetForStringIndex(ctLine, runRange.location, nil))
                 var ascent: CGFloat = 0
                 var descent: CGFloat = 0
                 let width = CGFloat(CTRunGetTypographicBounds(

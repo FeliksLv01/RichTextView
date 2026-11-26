@@ -1,3 +1,4 @@
+import CoreText
 import UIKit
 import XCTest
 @testable import RichTextView
@@ -518,6 +519,113 @@ final class RichTextLayoutEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(position, 0)
         XCTAssertEqual((text.string as NSString).substring(with: wordRange), "hello")
         XCTAssertFalse(rects.isEmpty)
+    }
+
+    func testCoreTextLinesAndBadgeReuseOnlyTheCurrentSecondaryThread() throws {
+        let layout = try Self.makeThreadIsolationLayout()
+        let badge = try XCTUnwrap(layout.attributedText.attribute(
+            RichCoreTextAttribute.inlineTextBadge, at: 0, effectiveRange: nil
+        ) as? RichInlineTextBadge)
+
+        @Sendable func currentLines() -> [CTLine] {
+            let lines = layout.linesForCurrentThread()
+            XCTAssertEqual(lines.count, 2)
+            let runs = lines.last.flatMap { CTLineGetGlyphRuns($0) as? [CTRun] }
+            XCTAssertTrue(runs?.contains { run in
+                (CTRunGetAttributes(run) as NSDictionary)[RichCoreTextAttribute.truncationToken] != nil
+            } == true)
+            return lines + [badge.lineForCurrentThread()]
+        }
+
+        // Keep previous instances alive so an allocator cannot recycle their addresses.
+        let original = currentLines()
+        let finished = expectation(description: "First worker revisited the evicted slot")
+        Thread.detachNewThread {
+            defer { finished.fulfill() }
+            let first = currentLines()
+            let firstIDs = first.map(ObjectIdentifier.init)
+            XCTAssertTrue(Set(firstIDs).isDisjoint(with: original.map(ObjectIdentifier.init)))
+            XCTAssertEqual(firstIDs, currentLines().map(ObjectIdentifier.init))
+
+            let replaced = DispatchSemaphore(value: 0)
+            Thread.detachNewThread {
+                let second = currentLines()
+                let secondIDs = second.map(ObjectIdentifier.init)
+                XCTAssertTrue(Set(secondIDs).isDisjoint(with: original.map(ObjectIdentifier.init) + firstIDs))
+                XCTAssertEqual(secondIDs, currentLines().map(ObjectIdentifier.init))
+                replaced.signal()
+            }
+            XCTAssertEqual(replaced.wait(timeout: .now() + 5), .success)
+            withExtendedLifetime(first) {
+                XCTAssertTrue(Set(firstIDs).isDisjoint(with: currentLines().map(ObjectIdentifier.init)))
+            }
+        }
+        wait(for: [finished], timeout: 10)
+        XCTAssertEqual(original.map(ObjectIdentifier.init), currentLines().map(ObjectIdentifier.init))
+    }
+
+    @MainActor
+    func testConcurrentDrawingAndMainThreadSelectionProduceStableOutput() async throws {
+        let layout = try await Task.detached { try Self.makeThreadIsolationLayout() }.value
+        let reference = try XCTUnwrap(Self.renderedPixels(layout))
+        XCTAssertTrue(reference.contains { $0 != 0 })
+        let range = NSRange(location: 0, length: layout.attributedText.length)
+        let rects = layout.selectionRects(for: range)
+        XCTAssertEqual(rects.count, 2)
+        let points = layout.lines.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) }
+        let positions = try points.map { try XCTUnwrap(layout.closestPosition(to: $0)) }
+
+        let ready = DispatchGroup()
+        let start = DispatchSemaphore(value: 0)
+        let done = DispatchGroup()
+        let workerCount = 4
+        for _ in 0..<workerCount {
+            ready.enter()
+            done.enter()
+            DispatchQueue.global().async {
+                defer { done.leave() }
+                ready.leave()
+                start.wait()
+                for _ in 0..<64 {
+                    autoreleasepool {
+                        XCTAssertEqual(Self.renderedPixels(layout), reference)
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(ready.wait(timeout: .now() + 5), .success)
+        for _ in 0..<workerCount { start.signal() }
+        for _ in 0..<256 {
+            XCTAssertEqual(layout.selectionRects(for: range), rects)
+            for (point, position) in zip(points, positions) {
+                XCTAssertEqual(layout.closestPosition(to: point), position)
+            }
+        }
+        XCTAssertEqual(done.wait(timeout: .now() + 15), .success)
+    }
+
+    private static func makeThreadIsolationLayout() throws -> RichCoreTextLayout {
+        let font = UIFont.systemFont(ofSize: 16)
+        let badge = RichInlineRunFactory.textBadge(
+            attributedText: NSAttributedString(string: "Tag", attributes: [.font: font, .backgroundColor: UIColor.yellow]),
+            contentInsets: .zero, outerInsets: .zero, cornerRadius: 2, baselineOffset: 0
+        )
+        let text = NSMutableAttributedString(attributedString: badge)
+        text.append(NSAttributedString(string: " hello\nsecond line with enough words to wrap and truncate",
+                                       attributes: [.font: font, .foregroundColor: UIColor.black]))
+        return try XCTUnwrap(RichCoreTextLayout(attributedText: text, constrainedWidth: 110,
+                                                maximumNumberOfLines: 2, lineBreakMode: .byTruncatingTail))
+    }
+
+    private static func renderedPixels(_ layout: RichCoreTextLayout) -> Data? {
+        let width = Int(ceil(layout.size.width))
+        let height = Int(ceil(layout.size.height))
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let pixels = context.data else { return nil }
+        layout.draw(in: context, canvasHeight: CGFloat(height), origin: .zero, isCancelled: { false })
+        return Data(bytes: pixels, count: context.bytesPerRow * height)
     }
 
     func testCoreTextLayoutSelectsParagraphAcrossWrappedLines() throws {
