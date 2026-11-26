@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name = 'RichTextView'
-  s.version = '0.1.4'
+  s.version = '0.2.0'
   s.summary = 'A unified rich-text node-tree renderer for UIKit'
   s.description = <<-DESC
     RichTextView renders an immutable, format-independent rich-text node tree
