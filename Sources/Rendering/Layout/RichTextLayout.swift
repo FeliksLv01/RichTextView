@@ -21,6 +21,22 @@ public final class RichTextLayout: Sendable {
     public let interactiveRegions: [RichInteractiveRegion]
     public let lines: [RichLineBox]
 
+    private let drawingBands: [IndexSet]
+    private let bandHeight: CGFloat
+
+    private static func band(at y: CGFloat, height: CGFloat, count: Int) -> Int {
+        Int(min(CGFloat(count - 1), max(0, y / height)))
+    }
+
+    func drawingIndices(in rect: CGRect) -> IndexSet {
+        guard !rect.isEmpty else { return [] }
+        let first = Self.band(at: rect.minY, height: bandHeight, count: drawingBands.count)
+        let last = Self.band(at: rect.maxY, height: bandHeight, count: drawingBands.count)
+        var indices = drawingBands[first]
+        for band in drawingBands[first...last].dropFirst() { indices.formUnion(band) }
+        return indices
+    }
+
     let codeBlockTextByID: [String: String]
 
     public convenience init(
@@ -47,6 +63,17 @@ public final class RichTextLayout: Sendable {
         self.constrainedSize = constrainedSize
         self.contentSize = contentSize
         self.runBoxes = runBoxes
+        // Bound the index size even for very tall or externally supplied layouts.
+        let bandHeight = max(512, contentSize.height / 4096)
+        self.bandHeight = bandHeight
+        let bandCount = Int(min(4096, max(1, ceil(contentSize.height / bandHeight))))
+        var bands = Array(repeating: IndexSet(), count: bandCount)
+        for (index, box) in runBoxes.enumerated() where !box.frame.isNull {
+            let first = Self.band(at: box.frame.minY, height: bandHeight, count: bandCount)
+            let last = Self.band(at: box.frame.maxY, height: bandHeight, count: bandCount)
+            for band in first...last { bands[band].insert(index) }
+        }
+        drawingBands = bands
         textRunBoxes = runBoxes.compactMap { $0 as? RichTextRunBox }
         imageRunBoxes = runBoxes.compactMap { $0 as? RichImageRunBox }
         attachmentRunBoxes = runBoxes.compactMap { $0 as? RichAttachmentRunBox }

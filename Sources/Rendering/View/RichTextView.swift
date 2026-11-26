@@ -93,16 +93,9 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
     public var selectionMenuActions: ((RichSelection) -> [RichSelectionMenuAction])?
     public weak var selectionMenuPresenter: RichSelectionMenuPresenting?
     public let imageLoader: RichImageLoader?
-    public var displaysAsynchronously: Bool {
-        get { renderLayer.displaysAsynchronously }
-        set { renderLayer.displaysAsynchronously = newValue }
-    }
     public var laysOutAsynchronously = true
     /// Fade only newly appended text. Existing content, layout and selection stay unchanged.
     public var animatesStreamingChanges = false
-
-    /// Kept for source compatibility. Bitmap updates always preserve the last completed frame.
-    public var preservesRenderedContentDuringAsyncUpdates = true
 
     public private(set) var currentLayout: RichTextLayout?
     public private(set) var currentSnapshot: RichElementSnapshot?
@@ -520,7 +513,6 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         contentMode = .topLeft
         renderLayer.richDisplayDelegate = self
         renderLayer.contentsScale = UIScreen.main.scale
-        renderLayer.displaysAsynchronously = false
         renderLayer.needsDisplayOnBoundsChange = true
         addGestureRecognizer(contentTapGesture)
         memoryWarningObserver = NotificationCenter.default.addObserver(

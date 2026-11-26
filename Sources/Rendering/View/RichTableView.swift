@@ -309,14 +309,22 @@ private final class RichTiledTableCanvas: RichTableCanvas {
 }
 
 class RichTableCanvas: UIView, UIGestureRecognizerDelegate {
+    private static let displayQueue = DispatchQueue(
+        label: "io.github.felikslv01.rich-text-view.table-display",
+        qos: .userInitiated
+    )
     override class var layerClass: AnyClass { RichTableLayer.self }
     private var model: RichTableLayoutModel?
     private var tileTask: RichRenderLayerDisplayTask?
+    private var displayGeneration: UInt = 0
     private lazy var attachments = RichAttachmentManager(hostView: self)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isOpaque = false
+        let scale = UIScreen.main.scale
+        contentScaleFactor = scale
+        layer.contentsScale = scale
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
         tap.delegate = self
         addGestureRecognizer(tap)
@@ -324,6 +332,15 @@ class RichTableCanvas: UIView, UIGestureRecognizerDelegate {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        let scale = window?.screen.scale ?? UIScreen.main.scale
+        guard abs(layer.contentsScale - scale) > 0.01 else { return }
+        contentScaleFactor = scale
+        layer.contentsScale = scale
+        if let model { redraw(model, traits: traitCollection) }
+    }
 
     func apply(_ model: RichTableLayoutModel) {
         self.model = model
@@ -341,6 +358,16 @@ class RichTableCanvas: UIView, UIGestureRecognizerDelegate {
     }
 
     fileprivate func redraw(_ model: RichTableLayoutModel, traits: UITraitCollection) {
+        let scale = window?.screen.scale ?? UIScreen.main.scale
+        contentScaleFactor = scale
+        layer.contentsScale = scale
+        let size = model.contentSize
+        guard size.width > 0, size.height > 0 else {
+            (layer as? RichTableLayer)?.drawTable = nil
+            displayGeneration &+= 1
+            layer.contents = nil
+            return
+        }
         let draw = { (context: CGContext) in
             traits.performAsCurrent { model.draw(in: context) }
         }
@@ -352,11 +379,32 @@ class RichTableCanvas: UIView, UIGestureRecognizerDelegate {
                 draw(context)
             }
             tileTask = task
-            tile.update(task: task, size: model.contentSize)
-        } else {
-            (layer as? RichTableLayer)?.drawTable = draw
+            tile.update(task: task, size: size)
+            tile.setNeedsDisplay()
+            return
         }
-        layer.setNeedsDisplay()
+        (layer as? RichTableLayer)?.drawTable = draw
+        displayGeneration &+= 1
+        let token = displayGeneration
+        Self.displayQueue.async { [weak self] in
+            let image: CGImage? = autoreleasepool {
+                let format = UIGraphicsImageRendererFormat()
+                format.scale = scale
+                format.opaque = false
+                format.preferredRange = .standard
+                return UIGraphicsImageRenderer(size: size, format: format).image { renderer in
+                    draw(renderer.cgContext)
+                }.cgImage
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.displayGeneration == token else { return }
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                self.layer.contentsScale = scale
+                self.layer.contents = image
+                CATransaction.commit()
+            }
+        }
     }
 
     override var accessibilityElements: [Any]? {

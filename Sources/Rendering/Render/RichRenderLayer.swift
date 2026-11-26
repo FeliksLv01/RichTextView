@@ -238,13 +238,17 @@ final class RichTiledLayer: CATiledLayer {
 
 final class RichRenderLayer: CALayer {
     weak var richDisplayDelegate: RichRenderLayerDelegate?
-    var displaysAsynchronously = false
     var suspendsDisplay = false
 
     private static let tileThreshold: CGFloat = 1_024
     private static let displayQueue = DispatchQueue(label: "io.github.felikslv01.rich-text-view.display", qos: .userInitiated)
     private let guardLock = NSLock()
     private var generation: UInt = 0
+    // Protected by guardLock together with generation. A fresh ID distinguishes
+    // a re-entering strip from a cancelled draw at the same document offset.
+    private var activeKeepRange: ClosedRange<Int>?
+    private var inFlightStrips: [Int: UUID] = [:]
+    private var awaitsFirstStrip = false
     private var pendingBitmapTask: RichRenderLayerDisplayTask?
     private var nativeTask: RichRenderLayerDisplayTask?
     private var requestedViewport: CGRect?
@@ -274,7 +278,6 @@ final class RichRenderLayer: CALayer {
         if size.height > Self.tileThreshold, let requestedViewport {
             stripTask = task
             updateStrips(in: requestedViewport, task: task, redraw: true)
-            task.didDisplay?()
             return
         }
         stripTask = nil
@@ -283,7 +286,7 @@ final class RichRenderLayer: CALayer {
             return
         }
 
-        if !displaysAsynchronously && !task.requiresAtomicBitmap && !task.animatesStreamingChanges {
+        if !task.requiresAtomicBitmap && !task.animatesStreamingChanges {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             nativeTask = task
@@ -321,13 +324,9 @@ final class RichRenderLayer: CALayer {
             CATransaction.commit()
             task.didDisplay?()
         }
-        if displaysAsynchronously {
-            Self.displayQueue.async {
-                let image = render()
-                DispatchQueue.main.async { install(image) }
-            }
-        } else {
-            install(render())
+        Self.displayQueue.async {
+            let image = render()
+            DispatchQueue.main.async { install(image) }
         }
     }
 
@@ -351,7 +350,7 @@ final class RichRenderLayer: CALayer {
         requestedViewport = rect
         guard bounds.height > Self.tileThreshold, !suspendsDisplay else { return }
         if changedMode { setNeedsDisplay() }
-        else if let rect, let task = stripTask, !needsDisplay() {
+        else if let rect, let task = stripTask {
             updateStrips(in: rect, task: task, redraw: false)
         }
     }
@@ -360,47 +359,115 @@ final class RichRenderLayer: CALayer {
         guard let display = task.display else { return }
         let size = bounds.size
         let documentBounds = CGRect(origin: .zero, size: size)
-        let keep = rect.insetBy(dx: 0, dy: -rect.height)
+        let keep = documentBounds.intersection(rect.insetBy(dx: 0, dy: -rect.height))
+        let keepRange = Self.stripRange(in: keep)
         let prefetch = documentBounds.intersection(rect.insetBy(dx: 0, dy: -0.5 * rect.height))
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
 
-        for (index, strip) in strips where !keep.intersects(strip.frame) || !documentBounds.intersects(strip.frame) {
+        for (index, strip) in strips where keepRange?.contains(index) != true {
             strip.contents = nil
             strip.removeFromSuperlayer()
             strips.removeValue(forKey: index)
             if idleStrips.count < 6 { idleStrips.append(strip) }
         }
         var required = redraw ? Set(strips.keys) : Set<Int>()
-        if !prefetch.isEmpty {
-            let first = Int(floor(prefetch.minY / Self.stripHeight))
-            let end = Int(ceil(prefetch.maxY / Self.stripHeight))
-            required.formUnion(first..<end)
+        if let range = Self.stripRange(in: prefetch) {
+            required.formUnion(range.filter { redraw || strips[$0] == nil })
         }
         let scale = max(1, contentsScale)
-        for index in required where redraw || strips[index] == nil {
-            let y = CGFloat(index) * Self.stripHeight
-            let frame = CGRect(x: 0, y: y, width: size.width, height: min(Self.stripHeight, size.height - y))
-            let image = Self.renderImage(size: frame.size, scale: scale) { context in
-                context.translateBy(x: 0, y: frame.maxY - size.height)
-                display(context, size, { false })
+        if redraw { awaitsFirstStrip = true }
+        guardLock.lock()
+        activeKeepRange = keepRange
+        inFlightStrips = inFlightStrips.filter { keepRange?.contains($0.key) == true }
+        let token = generation
+        let missing = required.filter { inFlightStrips[$0] == nil }.sorted {
+            let lhs = stripFrame($0, size: size)
+            let rhs = stripFrame($1, size: size)
+            let lhsVisible = !lhs.intersection(rect).isEmpty
+            let rhsVisible = !rhs.intersection(rect).isEmpty
+            if lhsVisible != rhsVisible { return lhsVisible }
+            return abs(lhs.midY - rect.midY) < abs(rhs.midY - rect.midY)
+        }
+        let requests = missing.map { index in
+            let id = UUID()
+            inFlightStrips[index] = id
+            return (index, id)
+        }
+        guardLock.unlock()
+        CATransaction.commit()
+
+        for (index, id) in requests {
+            let frame = stripFrame(index, size: size)
+            Self.displayQueue.async { [weak self, weak task] in
+                let cancelled = { [weak self] in
+                    self?.isCurrentStrip(index, id: id, generation: token) != true
+                }
+                guard !cancelled(), let display = task?.display else { return }
+                let image = Self.renderStrip(frame: frame, size: size, scale: scale, display: display, isCancelled: cancelled)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !cancelled() else { return }
+                    self.guardLock.lock()
+                    self.inFlightStrips.removeValue(forKey: index)
+                    self.guardLock.unlock()
+                    guard let image else { return }
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    self.installStrip(image, index: index, frame: frame, scale: scale)
+                    self.finishStripTransaction()
+                }
             }
-            let strip = strips[index] ?? idleStrips.popLast() ?? CALayer()
-            strip.frame = frame
-            strip.contentsScale = scale
-            strip.contents = image
-            if strip.superlayer == nil { insertSublayer(strip, at: 0) }
-            strips[index] = strip
         }
-        if redraw {
-            contents = nil
-            tiledLayer?.removeFromSuperlayer()
-            tiledLayer = nil
-            displayedSummary = nil
-            fadeRegions.removeAll()
-            clearStreamingMask()
+    }
+
+    private static func stripRange(in rect: CGRect) -> ClosedRange<Int>? {
+        guard !rect.isEmpty else { return nil }
+        return Int(floor(rect.minY / stripHeight))...Int(ceil(rect.maxY / stripHeight) - 1)
+    }
+
+    private func stripFrame(_ index: Int, size: CGSize) -> CGRect {
+        let y = CGFloat(index) * Self.stripHeight
+        return CGRect(x: 0, y: y, width: size.width, height: min(Self.stripHeight, size.height - y))
+    }
+
+    private func isCurrentStrip(_ index: Int, id: UUID, generation token: UInt) -> Bool {
+        guardLock.lock()
+        defer { guardLock.unlock() }
+        return generation == token && activeKeepRange?.contains(index) == true && inFlightStrips[index] == id
+    }
+
+    private static func renderStrip(frame: CGRect, size: CGSize, scale: CGFloat,
+                                    display: (CGContext, CGSize, () -> Bool) -> Void,
+                                    isCancelled: @escaping () -> Bool) -> CGImage? {
+        renderImage(size: frame.size, scale: scale) { context in
+            context.translateBy(x: 0, y: frame.maxY - size.height)
+            display(context, size, isCancelled)
         }
+    }
+
+    private func installStrip(_ image: CGImage?, index: Int, frame: CGRect, scale: CGFloat) {
+        let strip = strips[index] ?? idleStrips.popLast() ?? CALayer()
+        strip.frame = frame
+        strip.contentsScale = scale
+        strip.contents = image
+        if strip.superlayer == nil { insertSublayer(strip, at: 0) }
+        strips[index] = strip
+    }
+
+    private func finishStripTransaction() {
+        guard awaitsFirstStrip else {
+            CATransaction.commit()
+            return
+        }
+        awaitsFirstStrip = false
+        contents = nil
+        tiledLayer?.removeFromSuperlayer()
+        tiledLayer = nil
+        displayedSummary = nil
+        fadeRegions.removeAll()
+        clearStreamingMask()
+        CATransaction.commit()
+        stripTask?.didDisplay?()
     }
 
     private func removeStrips() {
@@ -523,7 +590,11 @@ final class RichRenderLayer: CALayer {
     private func invalidateDisplay() {
         guardLock.lock()
         generation &+= 1
+        activeKeepRange = nil
+        inFlightStrips.removeAll()
         guardLock.unlock()
+        stripTask = nil
+        awaitsFirstStrip = false
         pendingBitmapTask = nil
     }
 

@@ -3,6 +3,17 @@ import XCTest
 @testable import RichTextView
 
 final class RichTextLayoutEngineTests: XCTestCase {
+    func testDrawingBandsPreservePaintOrderAndDeduplicateSpanningRuns() {
+        let size = CGSize(width: 100, height: 4_096)
+        let boxes = [(600, 30), (10, 1_800), (3_000, 100), (490, 180)].enumerated().map { index, interval in
+            RichRunBox(id: String(index), frame: CGRect(x: 0, y: interval.0, width: 100, height: interval.1))
+        }
+        let layout = RichTextLayout(rootElementID: "root", constrainedSize: size, contentSize: size, runBoxes: boxes, lines: [])
+        let clip = CGRect(x: 0, y: 500, width: 100, height: 220)
+        XCTAssertEqual(Array(layout.drawingIndices(in: clip)), [0, 1, 3])
+        XCTAssertEqual(Array(layout.drawingIndices(in: clip.offsetBy(dx: 0, dy: 2_400))), [2])
+    }
+
     func testTableCachesOnlyFinalCellWidth() throws {
         let engine = RichTextLayoutEngine.shared
         engine.removeAllCachedLayouts()

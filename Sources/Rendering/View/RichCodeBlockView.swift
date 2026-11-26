@@ -156,7 +156,6 @@ final class RichCodeBlockView: UIView {
 
         codeTextView.backgroundColor = .clear
         codeTextView.laysOutAsynchronously = false
-        codeTextView.displaysAsynchronously = false
         codeTextView.lineBreakMode = .byClipping
         codeScrollView.addSubview(codeTextView)
     }

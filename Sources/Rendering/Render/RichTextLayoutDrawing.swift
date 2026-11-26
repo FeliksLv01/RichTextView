@@ -4,7 +4,11 @@ extension RichTextLayout {
     func draw(in context: CGContext, size: CGSize, loadedImages: [String: UIImage] = [:], isCancelled: () -> Bool = { false }) {
         let clip = context.boundingBoxOfClipPath
         let visible = CGRect(x: clip.minX, y: size.height - clip.maxY, width: clip.width, height: clip.height)
-        for runBox in runBoxes.reversed() where runBox.frame.intersects(visible) {
+        let indices = drawingIndices(in: visible)
+        for index in indices.reversed() {
+            if isCancelled() { return }
+            let runBox = runBoxes[index]
+            guard runBox.frame.intersects(visible) else { continue }
             guard let decorationRunBox = runBox as? RichDecorationRunBox else { continue }
             let color: UIColor
             let cornerRadius: CGFloat
@@ -62,7 +66,9 @@ extension RichTextLayout {
             }
             context.fillPath()
         }
-        for runBox in runBoxes where runBox.frame.intersects(visible) {
+        for index in indices {
+            let runBox = runBoxes[index]
+            guard runBox.frame.intersects(visible) else { continue }
             if isCancelled() { return }
             if let textRunBox = runBox as? RichTextRunBox {
                 textRunBox.layout.draw(

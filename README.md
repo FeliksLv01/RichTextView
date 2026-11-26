@@ -226,11 +226,12 @@ to 1,024 points in both dimensions keeps its bitmap until the replacement is
 ready. Larger views use Core Animation tiles and invalidate the changed suffix.
 Call `prepareForReuse()` to discard the displayed content immediately.
 
-For visible streaming messages, enable `displaysAsynchronously` and
-`animatesStreamingChanges`. The latter fades appended text in the bitmap mask
-or the affected native tiles using the existing layout. Rewrites,
-reflow, width/style changes and Reduce Motion skip the transition. Disable it for
-history loads and completed messages.
+For visible streaming messages, enable `animatesStreamingChanges`. Streaming
+and tiled/viewport-stripped content render asynchronously automatically while
+preserving the previous frame until ready. `animatesStreamingChanges` fades
+appended text in the bitmap mask or the affected native tiles using the
+existing layout. Rewrites, reflow, width/style changes and Reduce Motion skip
+the transition. Disable it for history loads and completed messages.
 
 ## Example app
 

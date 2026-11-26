@@ -98,10 +98,12 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
         noteLabel.frame = CGRect(x: horizontalInset, y: 24, width: contentWidth, height: noteHeight)
 
         let richTextY = noteLabel.frame.maxY + 24
-        let measuredSize = example == .longDocument ? richTextView.currentLayout?.contentSize : nil
-        let richTextSize = measuredSize ?? richTextView.sizeThatFits(
-            CGSize(width: contentWidth, height: .greatestFiniteMagnitude)
-        )
+        let richTextSize: CGSize
+        if let layout = richTextView.currentLayout, abs(layout.constrainedSize.width - contentWidth) <= 0.5 {
+            richTextSize = layout.contentSize
+        } else {
+            richTextSize = richTextView.sizeThatFits(CGSize(width: contentWidth, height: .greatestFiniteMagnitude))
+        }
         richTextView.frame = CGRect(
             x: horizontalInset,
             y: richTextY,
@@ -188,7 +190,6 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
             resolver: contentResolver, streaming: !update.isComplete).snapshot
         let layout = streamingLayoutEngine.layout(snapshot: snapshot,
             constrainedTo: CGSize(width: max(1, renderedWidth), height: .greatestFiniteMagnitude))
-        richTextView.displaysAsynchronously = true
         richTextView.animatesStreamingChanges = !update.isComplete
         richTextView.apply(snapshot, layout: layout)
         let progress = update.isComplete

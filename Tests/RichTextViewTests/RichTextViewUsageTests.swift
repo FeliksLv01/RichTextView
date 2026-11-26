@@ -275,6 +275,7 @@ final class RichTextViewUsageTests: XCTestCase {
             XCTAssertEqual(canvas.gestureRecognizers?.count, 1)
             XCTAssertTrue(canvas.gestureRecognizers?.first is UITapGestureRecognizer)
             XCTAssertEqual(canvas.layer is CATiledLayer, tiled)
+            XCTAssertEqual(canvas.layer.contentsScale, UIScreen.main.scale, accuracy: 0.01)
             if let tile = canvas.layer as? CATiledLayer {
                 XCTAssertEqual(tile.tileSize, CGSize(width: 512, height: 512))
                 XCTAssertEqual(type(of: tile).fadeDuration(), 0)
@@ -401,12 +402,6 @@ final class RichTextViewUsageTests: XCTestCase {
         XCTAssertEqual(rebuilt, next)
     }
 
-    func testAsyncUpdatesPreserveRenderedContentByDefault() {
-        let view = makeView()
-
-        XCTAssertTrue(view.preservesRenderedContentDuringAsyncUpdates)
-    }
-
     func testStreamingReusesUnchangedTilesAndInvalidatesAppearance() throws {
         let view = makeView()
         let layer = try XCTUnwrap(view.layer as? RichRenderLayer)
@@ -478,12 +473,13 @@ final class RichTextViewUsageTests: XCTestCase {
     }
 
     func testAsyncBitmapReplacesContentsOnlyAfterDrawing() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         let view = makeView()
+        window.addSubview(view)
         view.text = "Old"
         view.layer.display()
         let old = try XCTUnwrap(view.layer.contents as AnyObject?)
-        view.preservesRenderedContentDuringAsyncUpdates = false
-        view.displaysAsynchronously = true
+        view.animatesStreamingChanges = true
         let installed = expectation(description: "New bitmap installed")
         view.didDisplay = { installed.fulfill() }
         view.text = "New"
@@ -505,6 +501,7 @@ final class RichTextViewUsageTests: XCTestCase {
         let started = expectation(description: "Background drawing starts")
         let finished = expectation(description: "Cancelled drawing finishes")
         delegate.task = RichRenderLayerDisplayTask()
+        delegate.task.requiresAtomicBitmap = true
         delegate.task.display = { _, _, cancelled in
             if !cancelled() {
                 started.fulfill()
@@ -513,7 +510,6 @@ final class RichTextViewUsageTests: XCTestCase {
                 finished.fulfill()
             }
         }
-        layer.displaysAsynchronously = true
         layer.setNeedsDisplay()
         layer.display()
         await fulfillment(of: [started], timeout: 2)
@@ -521,6 +517,78 @@ final class RichTextViewUsageTests: XCTestCase {
         layer.clearDisplayContents()
         await fulfillment(of: [finished], timeout: 2)
         XCTAssertNil(layer.contents, "A reused view must reject stale rendering results")
+    }
+
+    func testAsyncViewportPrioritizesVisibleStripsAndCancelsObsoleteWork() async {
+        let layer = RichRenderLayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: 80, height: 12_288)
+        let delegate = StreamingLayerDelegate()
+        layer.richDisplayDelegate = delegate
+        let first = CGRect(x: 0, y: 2_048, width: 80, height: 512)
+        let second = first.offsetBy(dx: 0, dy: 6_144)
+        var drawn: [CGFloat] = [] // Accessed only on the serial display queue.
+        delegate.task.display = { context, size, cancelled in
+            guard !Thread.isMainThread else { return XCTFail("Strip drew on the main thread") }
+            let y = size.height - context.boundingBoxOfClipPath.maxY
+            drawn.append(y)
+            if drawn.count == 1 {
+                XCTAssertEqual(y, first.minY)
+                DispatchQueue.main.sync {
+                    XCTAssertNil(layer.sublayers?.first?.contents)
+                    layer.updateVisibleRect(second)
+                    layer.updateVisibleRect(second.offsetBy(dx: 0, dy: 1))
+                }
+                XCTAssertTrue(cancelled())
+            } else if drawn.count == 2 {
+                XCTAssertEqual(y, second.minY)
+            } else {
+                XCTAssertTrue([second.minY - 512, second.maxY].contains(y), "Skipped old prefetch requests")
+            }
+            context.fill(context.boundingBoxOfClipPath)
+        }
+
+        layer.updateVisibleRect(first)
+        layer.displayIfNeeded()
+        let expected = Set([second.minY - 512, second.minY, second.maxY])
+        let installed = expectation(for: NSPredicate { _, _ in
+            let strips = layer.sublayers ?? []
+            return strips.count == expected.count && strips.allSatisfy { $0.contents != nil }
+                && Set(strips.map { $0.frame.minY }) == expected
+        }, evaluatedWith: nil)
+        await fulfillment(of: [installed], timeout: 3)
+    }
+
+    func testReturningToViewportWhileCancelledStripIsStillDrawing() async {
+        let layer = RichRenderLayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: 80, height: 8_192)
+        let delegate = StreamingLayerDelegate()
+        layer.richDisplayDelegate = delegate
+        let rect = CGRect(x: 0, y: 0, width: 80, height: 512)
+        let installed = expectation(description: "Replacement strip installed")
+        var firstDraw = true
+        delegate.task.display = { context, _, cancelled in
+            if firstDraw {
+                firstDraw = false
+                guard !Thread.isMainThread else { return XCTFail("Strip drew on the main thread") }
+                DispatchQueue.main.sync {
+                    layer.updateVisibleRect(rect.offsetBy(dx: 0, dy: 4_096))
+                    layer.updateVisibleRect(rect)
+                }
+                XCTAssertTrue(cancelled())
+            } else {
+                XCTAssertFalse(cancelled())
+                context.fill(context.boundingBoxOfClipPath)
+            }
+        }
+        delegate.task.didDisplay = {
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertEqual(layer.sublayers?.first?.frame.minY, 0)
+            XCTAssertNotNil(layer.sublayers?.first?.contents)
+            installed.fulfill()
+        }
+        layer.updateVisibleRect(rect)
+        layer.displayIfNeeded()
+        await fulfillment(of: [installed], timeout: 2)
     }
 
     func testTiledDrawingUsesSystemClipAndDoesNotRetainDisplayTask() throws {
@@ -604,21 +672,24 @@ final class RichTextViewUsageTests: XCTestCase {
         XCTAssertFalse(view.layer.sublayers?.contains { $0 is CATiledLayer } ?? false)
     }
 
-    func testDisplayedBitmapAndSummaryReleaseLayout() throws {
+    func testDisplayedBitmapAndSummaryReleaseLayout() async throws {
         let layer = RichRenderLayer()
         layer.bounds = CGRect(x: 0, y: 0, width: 200, height: 50)
         let delegate = StreamingLayerDelegate()
         layer.richDisplayDelegate = delegate
         weak var previousLayout: RichTextLayout?
+        let done = expectation(description: "Async streaming frame installed")
         autoreleasepool {
             let view = makeView()
             view.text = "Completed frame"
             delegate.task = view.newRenderDisplayTask()
             delegate.task.animatesStreamingChanges = true
+            delegate.task.didDisplay = { done.fulfill() }
             previousLayout = delegate.task.layout
             layer.display()
             delegate.task = RichRenderLayerDisplayTask()
         }
+        await fulfillment(of: [done], timeout: 2)
         XCTAssertNotNil(layer.contents)
         XCTAssertNil(previousLayout)
     }
@@ -1045,7 +1116,7 @@ final class RichSelectionTests: XCTestCase {
         XCTAssertFalse(window.subviews.contains { $0 is RichSelectionHandleOverlay })
     }
 
-    func testViewportRecyclesBitmapsAndKeepsActiveSelection() throws {
+    func testViewportRecyclesBitmapsAndKeepsActiveSelection() async throws {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 512))
         let view = RichTextView(frame: CGRect(x: 0, y: 0, width: 200, height: 12288))
         window.addSubview(view)
@@ -1058,31 +1129,36 @@ final class RichSelectionTests: XCTestCase {
         let highlight = try XCTUnwrap(view.subviews.first { $0 is RichSelectionHighlightView })
         let handles = try XCTUnwrap(window.subviews.first { $0 is RichSelectionHandleOverlay })
         let firstScreen = window.bounds
-        func update(_ rect: CGRect?) {
-            view.updateVisibleRect(rect)
-            view.layer.displayIfNeeded()
-        }
         func strips() -> [CALayer] {
             (view.layer.sublayers ?? []).filter { $0 !== highlight.layer && $0.contents != nil }
         }
-        update(firstScreen)
+        func update(_ rect: CGRect?, expecting origins: Set<CGFloat>? = nil) async {
+            view.updateVisibleRect(rect)
+            view.layer.displayIfNeeded()
+            if let origins {
+                let ready = expectation(for: NSPredicate { _, _ in
+                    Set(strips().map { $0.frame.minY }) == origins
+                }, evaluatedWith: nil)
+                await fulfillment(of: [ready], timeout: 3)
+            }
+        }
+        await update(firstScreen, expecting: [0, 512])
         let first = strips()
         XCTAssertEqual(first.count, 2)
         let top = try XCTUnwrap(first.first { $0.frame.minY == 0 })
         let bitmap = try XCTUnwrap(top.contents as AnyObject?)
-        update(firstScreen.offsetBy(dx: 0, dy: 768))
+        await update(firstScreen.offsetBy(dx: 0, dy: 768), expecting: [0, 512, 1024])
         XCTAssertTrue(top.contents as AnyObject? === bitmap, "Retain strips within one screen of the viewport")
-        XCTAssertEqual(Set(strips().map { $0.frame.minY }), [0, 512, 1024])
-        update(.zero)
+        await update(.zero)
         XCTAssertTrue(top.contents as AnyObject? === bitmap)
-        update(firstScreen.offsetBy(dx: 0, dy: 1280))
+        await update(firstScreen.offsetBy(dx: 0, dy: 1280), expecting: [512, 1024, 1536])
         XCTAssertFalse(top.contents as AnyObject? === bitmap, "Release strips beyond the one-screen buffer")
-        update(firstScreen.offsetBy(dx: 0, dy: 8192))
+        await update(firstScreen.offsetBy(dx: 0, dy: 8192), expecting: [7680, 8192, 8704])
         XCTAssertTrue(strips().allSatisfy { $0.frame.minY >= 7680 })
         XCTAssertTrue(strips().contains { strip in first.contains { $0 === strip } })
         XCTAssertFalse(top.contents as AnyObject? === bitmap)
         let far = strips()
-        update(firstScreen)
+        await update(firstScreen, expecting: [0, 512])
         let retired = far.filter { $0.superlayer == nil }
         XCTAssertFalse(retired.isEmpty)
         XCTAssertTrue(retired.allSatisfy { $0.contents == nil })
@@ -1098,7 +1174,7 @@ final class RichSelectionTests: XCTestCase {
         controller.beginHandleDrag(.end, at: CGPoint(x: 10, y: 8))
         controller.extendSelection(to: CGPoint(x: 60, y: 80))
         XCTAssertGreaterThan(view.currentSelection?.globalRange.length ?? 0, selected.globalRange.length)
-        update(nil)
+        await update(nil)
         XCTAssertTrue(view.layer.sublayers?.contains { $0 is CATiledLayer } == true)
     }
 
