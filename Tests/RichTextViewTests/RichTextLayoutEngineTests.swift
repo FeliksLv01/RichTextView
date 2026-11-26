@@ -3,6 +3,154 @@ import XCTest
 @testable import RichTextView
 
 final class RichTextLayoutEngineTests: XCTestCase {
+    func testTableCachesOnlyFinalCellWidth() throws {
+        let engine = RichTextLayoutEngine.shared
+        engine.removeAllCachedLayouts()
+        defer { engine.removeAllCachedLayouts() }
+        let text = RichTextElement(id: "text", attributedText: NSAttributedString(string: "A"))
+        let cell = RichTableCellElement(id: "cell", alignment: .natural, children: [text])
+        let row = RichTableRowElement(id: "row", cells: [cell])
+        let style = RichTableStyle.standard
+        let table = try XCTUnwrap(RichTableLayoutBuilder.make(id: "table", rows: [(row, false)], constrainedWidth: 300, style: style))
+        let finalCell = try XCTUnwrap(table.rows.first?.first)
+        XCTAssertLessThan(finalCell.frame.width, style.maximumCellContentWidth)
+        XCTAssertEqual(engine.cachedLayoutCount, 1)
+
+        let finalLayout = try XCTUnwrap(finalCell.layout.textRunBoxes.first?.layout)
+        let repeated = engine.layout(snapshot: finalCell.snapshot, constrainedTo: finalCell.frame.size)
+        XCTAssertTrue(repeated.textRunBoxes.first?.layout === finalLayout)
+    }
+
+    func testInlineLocalImageIsReleasedWhileEngineIsAlive() {
+        let engine = RichTextLayoutEngine()
+        let size = CGSize(width: 200, height: 80)
+        let prefix = RichTextElement(id: "prefix", attributedText: NSAttributedString(string: "Image "))
+        func snapshot(_ children: [RichElement]) -> RichElementSnapshot {
+            RichElementSnapshot(root: RichContainerElement(id: "root", children: children))
+        }
+        _ = engine.layout(snapshot: snapshot([prefix]), constrainedTo: size)
+        XCTAssertEqual(engine.cachedLayoutCount, 1)
+
+        weak var weakImage: UIImage?
+        weak var weakLayout: RichCoreTextLayout?
+        autoreleasepool {
+            let image = UIGraphicsImageRenderer(size: CGSize(width: 16, height: 16)).image { context in
+                context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+            }
+            weakImage = image
+            let element = RichImageElement(id: "image", source: RichImageSource(identifier: "local", image: image),
+                                           size: CGSize(width: 16, height: 16), font: .systemFont(ofSize: 16))
+            let layout = engine.layout(snapshot: snapshot([prefix, element]), constrainedTo: size)
+            weakLayout = layout.textRunBoxes.first?.layout
+            XCTAssertEqual(layout.textRunBoxes.first?.text.string, "Image \u{FFFC}")
+        }
+        XCTAssertNil(weakLayout)
+        XCTAssertEqual(engine.cachedLayoutCount, 0)
+        // Core Text can keep the last run attributes alive until it lays out another string.
+        autoreleasepool {
+            _ = RichCoreTextLayout(attributedText: prefix.attributedText, constrainedWidth: size.width)
+        }
+        XCTAssertNil(weakImage)
+    }
+
+    func testInlineAndFittedLatexSkipCache() throws {
+        let engine = RichTextLayoutEngine()
+        for isBlock in [false, true] {
+            let math = try XCTUnwrap(RichLatexLayout(latex: "x", pointSize: 16, isBlock: isBlock, color: .black))
+            let latex = RichLatexElement(id: "latex", latex: "x", isBlock: isBlock, layout: math)
+            let snapshot = RichElementSnapshot(root: RichContainerElement(id: "root", children: [latex]))
+            let layout = engine.layout(snapshot: snapshot, constrainedTo: CGSize(width: 200, height: 80))
+            XCTAssertEqual(layout.textRunBoxes.count, 1)
+            XCTAssertEqual(engine.cachedLayoutCount, 0)
+        }
+    }
+
+    func testFlushedInlineRunBoxUsesFirstElementID() {
+        let first = RichTextElement(id: "a", attributedText: NSAttributedString(string: "A"))
+        let second = RichTextElement(id: "b", attributedText: NSAttributedString(string: "B"))
+        let snapshot = RichElementSnapshot(root: RichContainerElement(id: "root", children: [first, second]))
+        let layout = RichTextLayoutEngine().layout(snapshot: snapshot, constrainedTo: CGSize(width: 200, height: 80))
+        XCTAssertEqual(layout.textRunBoxes.map(\.id), [first.id])
+        XCTAssertEqual(layout.textRunBoxes.first?.text.string, "AB")
+    }
+
+    func testSlotUpdatesActionAndCopyTextIndependently() throws {
+        let engine = RichTextLayoutEngine()
+        func run(_ action: String, _ copy: String) throws -> RichTextRunBox {
+            let link = RichAnchorElement(id: "link", attributedText: NSAttributedString(string: "Tap"),
+                                         actionIdentifier: action, copyText: copy)
+            let snapshot = RichElementSnapshot(root: RichContainerElement(id: "root", children: [link]))
+            return try XCTUnwrap(engine.layout(snapshot: snapshot, constrainedTo: CGSize(width: 200, height: 80)).textRunBoxes.first)
+        }
+
+        let original = try run("first", "Copy A")
+        let point = CGPoint(x: 1, y: original.frame.midY)
+        XCTAssertEqual(original.actionIdentifier(at: point), "first")
+        let changedAction = try run("second", "Copy A")
+        XCTAssertEqual(changedAction.actionIdentifier(at: point), "second")
+        XCTAssertFalse(original.layout === changedAction.layout)
+        let changedCopy = try run("second", "Copy B")
+        XCTAssertEqual(changedCopy.segments.first?.copyText, "Copy B")
+        XCTAssertFalse(changedAction.layout === changedCopy.layout)
+        XCTAssertNil(try run("", "Copy B").actionIdentifier(at: point))
+        XCTAssertEqual(engine.cachedLayoutCount, 1)
+    }
+
+    func testStreamingSlotsReplacePrefixesAndEvictLeastRecentlyUsedWidth() throws {
+        let engine = RichTextLayoutEngine(cacheCapacity: 2)
+        func layout(_ length: Int, width: CGFloat) throws -> RichCoreTextLayout {
+            let text = RichTextElement(id: "p", attributedText: NSAttributedString(string: String(repeating: "a", count: length)))
+            let snapshot = RichElementSnapshot(root: RichContainerElement(id: "root", children: [text]))
+            return try XCTUnwrap(engine.layout(snapshot: snapshot, constrainedTo: CGSize(width: width, height: 200)).textRunBoxes.first?.layout)
+        }
+        for length in 1...100 { _ = try layout(length, width: 80) }
+        XCTAssertEqual(engine.cachedLayoutCount, 1)
+        let first = try layout(100, width: 80)
+        let second = try layout(100, width: 81)
+        XCTAssertTrue(try layout(100, width: 80) === first)
+        _ = try layout(100, width: 82)
+        XCTAssertEqual(engine.cachedLayoutCount, 2)
+        XCTAssertFalse(try layout(100, width: 81) === second)
+        engine.removeAllCachedLayouts()
+        XCTAssertEqual(engine.cachedLayoutCount, 0)
+    }
+
+    func testSharedCacheClearsOnBackgroundAndMemoryWarning() {
+        let engine = RichTextLayoutEngine.shared
+        for name in [UIApplication.didEnterBackgroundNotification, UIApplication.didReceiveMemoryWarningNotification] {
+            _ = engine.layout(snapshot: snapshot(color: .black), constrainedTo: CGSize(width: 200, height: 80))
+            XCTAssertGreaterThan(engine.cachedLayoutCount, 0)
+            NotificationCenter.default.post(name: name, object: nil)
+            XCTAssertEqual(engine.cachedLayoutCount, 0)
+        }
+    }
+
+    func testSharedCacheSeparatesDocumentsWithIdenticalBlockPaths() throws {
+        func layout(_ root: String, text: String) throws -> RichCoreTextLayout {
+            let child = RichTextElement(id: "0.0", attributedText: NSAttributedString(string: text))
+            let snapshot = RichElementSnapshot(root: RichContainerElement(id: root, children: [child]))
+            let result = RichTextLayoutEngine.shared.layout(snapshot: snapshot, constrainedTo: CGSize(width: 200, height: 80))
+            return try XCTUnwrap(result.textRunBoxes.first?.layout)
+        }
+        let first = try layout("doc-a", text: "First")
+        let second = try layout("doc-b", text: "Second")
+        XCTAssertTrue(try layout("doc-a", text: "First") === first)
+        XCTAssertFalse(try layout("doc-a", text: "First extended") === first)
+        XCTAssertTrue(try layout("doc-b", text: "Second") === second)
+    }
+
+    func testRendererResetReleasesCachedElements() {
+        let renderer = RichContentRenderer()
+        let document = RichContentDocument(id: "doc", children: [.paragraph(id: "p", text: "Cached")])
+        weak var child: RichElement?
+        autoreleasepool {
+            child = renderer.render(document: document, constrainedWidth: 200, configuration: .standard).snapshot.root.children.first
+        }
+        XCTAssertNotNil(child)
+        renderer.reset()
+        XCTAssertNil(child)
+    }
+
     func testImageAspectFitPreservesSourceRatioInsideContentInsets() {
         let fitted = RichImageDrawing.fittedRect(
             imageSize: CGSize(width: 200, height: 100),
@@ -314,17 +462,26 @@ final class RichTextLayoutEngineTests: XCTestCase {
     }
 
     @MainActor
-    func testAttachmentPoolSurvivesHostCellReuse() {
+    func testDetachedHostDiscardsAttachmentsOnReuse() {
         let hostView = UIView()
-        let manager = RichAttachmentManager(hostView: hostView, poolCapacityPerIdentifier: 1)
+        let manager = RichAttachmentManager(hostView: hostView)
         let provider = CountingAttachmentProvider()
-        manager.apply([attachmentRunBox(id: "first", provider: provider)])
-        manager.prepareForReuse()
+        let owner = UIViewController()
+        weak var firstView: UIView?
+        autoreleasepool {
+            owner.view.addSubview(hostView)
+            manager.apply([attachmentRunBox(id: "first", provider: provider)])
+            firstView = manager.view(for: "first")
+            hostView.removeFromSuperview()
+            manager.prepareForReuse()
+        }
+        XCTAssertNil(firstView)
         manager.apply([attachmentRunBox(id: "second", provider: provider)])
 
-        XCTAssertEqual(provider.makeCount, 1)
+        XCTAssertEqual(provider.makeCount, 2)
         XCTAssertEqual(provider.updateCount, 2)
         XCTAssertEqual(hostView.subviews.count, 1)
+        withExtendedLifetime(owner) {}
     }
 
     func testCoreTextLayoutSharesGeometryForSizingHitTestingAndSelection() throws {

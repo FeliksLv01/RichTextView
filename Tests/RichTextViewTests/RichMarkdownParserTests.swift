@@ -7,6 +7,15 @@ import iosMath
 #endif
 
 final class RichMarkdownParserTests: XCTestCase {
+    func testMarkdownLinkCarriesTypedActionThroughReveal() throws {
+        let url = try XCTUnwrap(URL(string: "https://example.com/reference"))
+        let document = makeParser().parse("[Reference](\(url.absoluteString))", documentID: "doc").document
+        let partial = RichContentDocumentRevealProjector().project(document, visibleUnitCount: 3).document
+        for root in [document.root, partial.root] {
+            XCTAssertEqual(flatten(root).first { $0.type == .link }?.action, RichAction(.link(url)))
+        }
+    }
+
     func testStreamingLeavesIncompleteEmphasisAndMathUnstyled() {
         let parser = makeParser()
         let strong = parser.parse("Prefix ** ddddd", documentID: "strong", streaming: true)
@@ -359,6 +368,97 @@ final class RichMarkdownParserTests: XCTestCase {
     }
 
     @MainActor
+    func testCopyCodeWritesFullMarkdownBlockAndDispatchesEvent() throws {
+        let code = "\n" + (1...20).map { "    print(\($0))" }.joined(separator: "\n") + "\n"
+        let document = makeParser().parse(
+            "```swift\nother()\n```\n\n```swift\n\(code)\n```",
+            documentID: "copy"
+        ).document
+        let block = try XCTUnwrap(flatten(document.root).last { $0.type == .codeBlock })
+        let host = RichTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 800))
+        host.laysOutAsynchronously = false
+        host.setContent(document)
+        let action = RichAction(.copyCode(nodeID: block.id))
+        let region = try XCTUnwrap(host.currentLayout?.interactiveRegions.first { $0.action == action })
+        let rect = try XCTUnwrap(region.rects.first)
+        let point = CGPoint(x: rect.midX, y: rect.midY)
+        let pasteboard = isolatedCopyPasteboard(for: host)
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+
+        pasteboard.string = "before"
+        host.handleContentTap(at: point)
+        XCTAssertEqual(pasteboard.string, code)
+
+        var events: [RichActionEvent] = []
+        host.actionEventHandler = { _, event in
+            XCTAssertEqual(pasteboard.string, code)
+            events.append(event)
+        }
+        pasteboard.string = "before"
+        host.handleContentTap(at: point)
+        XCTAssertEqual(events, [region.event(trigger: .tap)])
+    }
+
+    @MainActor
+    func testCopyCodeUpdatesGeneralPasteboardWithObservingDelegate() throws {
+        final class Delegate: RichTextViewInteractionDelegate {
+            var events: [RichActionEvent] = []
+            func richView(_ richView: RichTextView, didTrigger event: RichActionEvent) {
+                events.append(event)
+            }
+        }
+        let code = "print(\"Hello from Markdown\")"
+        let document = makeParser().parse("```swift\n\(code)\n```", documentID: "general-copy").document
+        let host = RichTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        host.laysOutAsynchronously = false
+        host.setContent(document)
+        let delegate = Delegate()
+        host.interactionDelegate = delegate
+        let region = try XCTUnwrap(host.currentLayout?.interactiveRegions.first)
+        let rect = try XCTUnwrap(region.rects.first)
+        let previousChangeCount = UIPasteboard.general.changeCount
+
+        host.handleContentTap(at: CGPoint(x: rect.midX, y: rect.midY))
+
+        XCTAssertGreaterThan(UIPasteboard.general.changeCount, previousChangeCount)
+        XCTAssertEqual(delegate.events, [region.event(trigger: .tap)])
+    }
+
+    @MainActor
+    func testDelegateCanInterceptCodeCopyWhileLegacyHandlerReceivesAction() throws {
+        final class Delegate: RichTextViewInteractionDelegate {
+            var copiedCode: String?
+            var copiedID: String?
+            func richView(_ richView: RichTextView, copyCode code: String, nodeID: String) -> Bool {
+                copiedCode = code
+                copiedID = nodeID
+                return true
+            }
+        }
+
+        let document = makeParser().parse("```swift\nlet a = 1\n```", documentID: "intercept").document
+        let host = RichTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        host.laysOutAsynchronously = false
+        host.setContent(document)
+        let block = try XCTUnwrap(flatten(document.root).first { $0.type == .codeBlock })
+        let delegate = Delegate()
+        host.interactionDelegate = delegate
+        var identifiers: [String] = []
+        host.actionHandler = { _, identifier in identifiers.append(identifier) }
+        let rect = try XCTUnwrap(host.currentLayout?.interactiveRegions.first?.rects.first)
+        let pasteboard = isolatedCopyPasteboard(for: host)
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        pasteboard.string = "before"
+
+        host.handleContentTap(at: CGPoint(x: rect.midX, y: rect.midY))
+
+        XCTAssertEqual(delegate.copiedCode, "let a = 1")
+        XCTAssertEqual(delegate.copiedID, block.id)
+        XCTAssertEqual(pasteboard.string, "before")
+        XCTAssertEqual(identifiers, ["copy-code:\(block.id)"])
+    }
+
+    @MainActor
     func testCodeBlockCanRestoreHorizontalScrolling() throws {
         let font = UIFont.preferredFont(forTextStyle: .body)
         let configuration = RichContentRenderingConfiguration(
@@ -392,6 +492,39 @@ final class RichMarkdownParserTests: XCTestCase {
         XCTAssertEqual(configuration.codeBlockOverflowBehavior, .horizontalScroll)
         XCTAssertEqual(attachment.reuseIdentifier, RichCodeBlockViewProvider.reuseIdentifier)
         XCTAssertTrue(attachment.provider is RichCodeBlockViewProvider)
+
+        let host = RichTextView(frame: CGRect(x: 0, y: 0, width: 120, height: 200))
+        host.laysOutAsynchronously = false
+        let node = try XCTUnwrap(flatten(parsed.document.root).first { $0.type == .codeBlock })
+        func copyControl(in view: UIView) -> UIControl? {
+            if let control = view as? UIControl, control.accessibilityLabel == "Copy" { return control }
+            return view.subviews.lazy.compactMap { copyControl(in: $0) }.first
+        }
+        host.setContent(parsed.document, configuration: configuration)
+        host.layoutIfNeeded()
+        var event: RichActionEvent?
+        host.actionEventHandler = { _, value in event = value }
+        let pasteboard = isolatedCopyPasteboard(for: host)
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        pasteboard.string = "before"
+        try XCTUnwrap(copyControl(in: host)).sendActions(for: .touchUpInside)
+        XCTAssertEqual(pasteboard.string, "let value = aVeryLongExpressionThatNeedsHorizontalScrolling")
+        XCTAssertEqual(event?.action, RichAction(.copyCode(nodeID: node.id)))
+
+        let custom = RichAction(.custom("inspect-code", payload: ["language": "swift"]))
+        host.setContent(RichContentDocument(id: "code", children: [
+            RichContentNode(id: node.id, type: node.type, content: node.content, children: node.children, action: custom)
+        ]), configuration: configuration)
+        host.layoutIfNeeded()
+        let region = try XCTUnwrap(host.currentLayout?.interactiveRegions.first)
+        let control = try XCTUnwrap(copyControl(in: host))
+        XCTAssertEqual(region.rects, [control.convert(control.bounds, to: host)])
+        pasteboard.string = "before"
+        control.sendActions(for: .touchUpInside)
+        XCTAssertEqual(pasteboard.string, "before")
+        XCTAssertEqual(event?.action, custom)
+        XCTAssertEqual(event?.trigger, .tap)
+        XCTAssertEqual(event?.rects, region.rects)
     }
 
     @MainActor
@@ -543,6 +676,15 @@ final class RichMarkdownParserTests: XCTestCase {
         renderCodeBlock(resolver: TestCodeResolver())
 
         XCTAssertEqual(plugin.callCount, 0)
+    }
+
+    @MainActor
+    private func isolatedCopyPasteboard(for host: RichTextView) -> UIPasteboard {
+        XCTAssertEqual(host.codeCopyPasteboard.name, UIPasteboard.Name.general)
+        // Hostless SwiftPM tests can write the general pasteboard, but iOS restricts reading it.
+        let pasteboard = UIPasteboard.withUniqueName()
+        host.codeCopyPasteboard = pasteboard
+        return pasteboard
     }
 
     private func renderCodeBlock(
