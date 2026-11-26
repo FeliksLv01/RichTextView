@@ -18,15 +18,31 @@ public final class RichTextLayout: Sendable {
     public let textRunBoxes: [RichTextRunBox]
     public let imageRunBoxes: [RichImageRunBox]
     public let attachmentRunBoxes: [RichAttachmentRunBox]
+    public let interactiveRegions: [RichInteractiveRegion]
     public let lines: [RichLineBox]
 
-    public init(
+    let codeBlockTextByID: [String: String]
+
+    public convenience init(
         rootElementID: String,
         constrainedSize: CGSize,
         contentSize: CGSize,
         runBoxes: [RichRunBox],
         lines: [RichLineBox]
     ) {
+        self.init(rootElementID: rootElementID, constrainedSize: constrainedSize, contentSize: contentSize,
+                  runBoxes: runBoxes, lines: lines, codeBlockTextByID: [:])
+    }
+
+    init(
+        rootElementID: String,
+        constrainedSize: CGSize,
+        contentSize: CGSize,
+        runBoxes: [RichRunBox],
+        lines: [RichLineBox],
+        codeBlockTextByID: [String: String]
+    ) {
+        self.codeBlockTextByID = codeBlockTextByID
         self.rootElementID = rootElementID
         self.constrainedSize = constrainedSize
         self.contentSize = contentSize
@@ -34,7 +50,30 @@ public final class RichTextLayout: Sendable {
         textRunBoxes = runBoxes.compactMap { $0 as? RichTextRunBox }
         imageRunBoxes = runBoxes.compactMap { $0 as? RichImageRunBox }
         attachmentRunBoxes = runBoxes.compactMap { $0 as? RichAttachmentRunBox }
+        interactiveRegions = runBoxes.flatMap { box -> [RichInteractiveRegion] in
+            if let text = box as? RichTextRunBox { return text.interactiveRegions }
+            if let image = box as? RichImageRunBox, let action = image.element.action, !image.frame.isEmpty {
+                return [RichInteractiveRegion(action: action, elementID: image.id, range: image.globalRange, rects: [image.frame])]
+            }
+            if let attachment = box as? RichAttachmentRunBox,
+               let code = attachment.element.provider as? RichCodeBlockViewProvider,
+               let region = code.copyRegion(in: attachment) {
+                return [region]
+            }
+            return []
+        }
         self.lines = lines
+    }
+
+    func interactiveRegion(at point: CGPoint) -> RichInteractiveRegion? {
+        interactiveRegions.last { $0.contains(point) }
+    }
+
+    func textHit(at point: CGPoint) -> (runBox: RichTextRunBox, localPoint: CGPoint)? {
+        guard let runBox = textRunBoxes.first(where: { $0.frame.insetBy(dx: -12, dy: -8).contains(point) }) else {
+            return nil
+        }
+        return (runBox, CGPoint(x: point.x - runBox.frame.minX, y: point.y - runBox.frame.minY))
     }
 
     func listItemSelectionRange(at point: CGPoint) -> NSRange? {

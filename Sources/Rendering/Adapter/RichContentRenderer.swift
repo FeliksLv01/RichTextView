@@ -17,6 +17,8 @@ public final class RichContentRenderer {
     private struct Entry {
         let type: RichContentNodeType
         let content: any RichContentNodeContent
+        let action: RichAction?
+        let width: CGFloat
         let builderKey: AnyHashable
         let children: [RichElement]
         let leading: Bool
@@ -35,6 +37,19 @@ public final class RichContentRenderer {
 
     public init(registry: RichContentElementBuilderRegistry? = nil) {
         self.registry = registry ?? .standard
+    }
+
+    public func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        entries.removeAll()
+        visited.removeAll()
+        previousConfiguration = nil
+        previousTraits = nil
+        previousStreaming = false
+        previousWidth = nil
+        previousResolverKey = nil
+        previousResolverType = nil
     }
 
     public func render(
@@ -95,9 +110,10 @@ public final class RichContentRenderer {
         guard !context.configuration.excludedNodeIDs.contains(node.id) else { return nil }
         let providesInlineSequence = node.type == .paragraph || node.type == .heading || node.type == .inline
         let inheritsInlineEdges = node.type == .inline
+        let childWidth = node.type == .tableCell ? context.configuration.tableStyle.maximumCellContentWidth : context.constrainedWidth
         let children = node.children.enumerated().compactMap { index, child in
             let childContext = RichContentRenderContext(
-                constrainedWidth: context.constrainedWidth,
+                constrainedWidth: childWidth,
                 configuration: context.configuration,
                 resolver: context.resolver,
                 streaming: context.streaming,
@@ -127,7 +143,7 @@ public final class RichContentRenderer {
             && context.configuration.leadingElements.isEmpty
         visited.insert(node.id)
         if cacheable, let entry = entries[node.id], entry.type == node.type,
-           entry.builderKey == builderKey,
+           entry.width == context.constrainedWidth, entry.builderKey == builderKey, entry.action == node.action,
            entry.content.matches(node.content),
            entry.leading == context.needsLeadingInlineSpacing,
            entry.trailing == context.needsTrailingInlineSpacing,
@@ -138,7 +154,8 @@ public final class RichContentRenderer {
         let element = context.resolver?.overrideElement(for: node, context: context)
             ?? builder.build(node: node, children: children, context: context)
         if cacheable, let element {
-            entries[node.id] = Entry(type: node.type, content: node.content, builderKey: builderKey, children: children,
+            entries[node.id] = Entry(type: node.type, content: node.content, action: node.action, width: context.constrainedWidth,
+                builderKey: builderKey, children: children,
                 leading: context.needsLeadingInlineSpacing, trailing: context.needsTrailingInlineSpacing, element: element)
         } else {
             entries.removeValue(forKey: node.id)

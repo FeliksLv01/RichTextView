@@ -14,7 +14,7 @@ public class RichTextElement: RichElement, @unchecked Sendable {
         lineBreakMode: NSLineBreakMode = .byWordWrapping,
         display: RichElementDisplay = .inline
     ) {
-        self.attributedText = NSAttributedString(attributedString: attributedText)
+        self.attributedText = attributedText.copy() as! NSAttributedString
         self.copyText = copyText ?? attributedText.string
         self.maximumNumberOfLines = max(0, maximumNumberOfLines)
         self.lineBreakMode = lineBreakMode
@@ -23,13 +23,14 @@ public class RichTextElement: RichElement, @unchecked Sendable {
 }
 
 protocol RichActionElement {
-    var actionIdentifier: String { get }
+    var action: RichAction? { get }
 }
 
 public final class RichAnchorElement: RichTextElement, RichActionElement, @unchecked Sendable {
-    public let actionIdentifier: String
+    public var actionIdentifier: String { action?.legacyIdentifier ?? "" }
+    public let action: RichAction?
 
-    public init(
+    public convenience init(
         id: String,
         attributedText: NSAttributedString,
         actionIdentifier: String,
@@ -38,7 +39,27 @@ public final class RichAnchorElement: RichTextElement, RichActionElement, @unche
         lineBreakMode: NSLineBreakMode = .byWordWrapping,
         display: RichElementDisplay = .inline
     ) {
-        self.actionIdentifier = actionIdentifier
+        self.init(
+            id: id,
+            attributedText: attributedText,
+            action: RichAction(legacyIdentifier: actionIdentifier),
+            copyText: copyText,
+            maximumNumberOfLines: maximumNumberOfLines,
+            lineBreakMode: lineBreakMode,
+            display: display
+        )
+    }
+
+    public init(
+        id: String,
+        attributedText: NSAttributedString,
+        action: RichAction?,
+        copyText: String? = nil,
+        maximumNumberOfLines: Int = 0,
+        lineBreakMode: NSLineBreakMode = .byWordWrapping,
+        display: RichElementDisplay = .inline
+    ) {
+        self.action = action
         super.init(
             id: id,
             attributedText: attributedText,
@@ -58,10 +79,11 @@ public final class RichTextBadgeElement: RichElement, RichActionElement, @unchec
     public let borderColor: UIColor?
     public let borderWidth: CGFloat
     public let baselineOffset: CGFloat
-    public let actionIdentifier: String
+    public var actionIdentifier: String { action?.legacyIdentifier ?? "" }
+    public let action: RichAction?
     public let copyText: String
 
-    public init(
+    public convenience init(
         id: String,
         text: String,
         font: UIFont,
@@ -76,6 +98,38 @@ public final class RichTextBadgeElement: RichElement, RichActionElement, @unchec
         actionIdentifier: String,
         copyText: String? = nil
     ) {
+        self.init(
+            id: id,
+            text: text,
+            font: font,
+            foregroundColor: foregroundColor,
+            backgroundColor: backgroundColor,
+            contentInsets: contentInsets,
+            outerInsets: outerInsets,
+            cornerRadius: cornerRadius,
+            borderColor: borderColor,
+            borderWidth: borderWidth,
+            baselineOffset: baselineOffset,
+            action: RichAction(legacyIdentifier: actionIdentifier),
+            copyText: copyText
+        )
+    }
+
+    public convenience init(
+        id: String,
+        text: String,
+        font: UIFont,
+        foregroundColor: UIColor,
+        backgroundColor: UIColor,
+        contentInsets: UIEdgeInsets,
+        outerInsets: UIEdgeInsets = .zero,
+        cornerRadius: CGFloat,
+        borderColor: UIColor? = nil,
+        borderWidth: CGFloat = 0,
+        baselineOffset: CGFloat = 0,
+        action: RichAction?,
+        copyText: String? = nil
+    ) {
         let attributedText = NSAttributedString(
             string: text,
             attributes: [
@@ -84,19 +138,21 @@ public final class RichTextBadgeElement: RichElement, RichActionElement, @unchec
                 .backgroundColor: backgroundColor
             ]
         )
-        self.contentInsets = contentInsets
-        self.outerInsets = outerInsets
-        self.cornerRadius = cornerRadius
-        self.borderColor = borderColor
-        self.borderWidth = max(0, borderWidth)
-        self.baselineOffset = baselineOffset
-        self.actionIdentifier = actionIdentifier
-        self.copyText = copyText ?? text
-        self.attributedText = attributedText
-        super.init(id: id, display: .inline)
+        self.init(
+            id: id,
+            attributedText: attributedText,
+            contentInsets: contentInsets,
+            outerInsets: outerInsets,
+            cornerRadius: cornerRadius,
+            borderColor: borderColor,
+            borderWidth: borderWidth,
+            baselineOffset: baselineOffset,
+            action: action,
+            copyText: copyText
+        )
     }
 
-    public init(
+    public convenience init(
         id: String,
         attributedText: NSAttributedString,
         contentInsets: UIEdgeInsets,
@@ -108,13 +164,39 @@ public final class RichTextBadgeElement: RichElement, RichActionElement, @unchec
         actionIdentifier: String = "",
         copyText: String? = nil
     ) {
+        self.init(
+            id: id,
+            attributedText: attributedText,
+            contentInsets: contentInsets,
+            outerInsets: outerInsets,
+            cornerRadius: cornerRadius,
+            borderColor: borderColor,
+            borderWidth: borderWidth,
+            baselineOffset: baselineOffset,
+            action: RichAction(legacyIdentifier: actionIdentifier),
+            copyText: copyText
+        )
+    }
+
+    public init(
+        id: String,
+        attributedText: NSAttributedString,
+        contentInsets: UIEdgeInsets,
+        outerInsets: UIEdgeInsets = .zero,
+        cornerRadius: CGFloat,
+        borderColor: UIColor? = nil,
+        borderWidth: CGFloat = 0,
+        baselineOffset: CGFloat = 0,
+        action: RichAction?,
+        copyText: String? = nil
+    ) {
         self.contentInsets = contentInsets
         self.outerInsets = outerInsets
         self.cornerRadius = cornerRadius
         self.borderColor = borderColor
         self.borderWidth = max(0, borderWidth)
         self.baselineOffset = baselineOffset
-        self.actionIdentifier = actionIdentifier
+        self.action = action
         self.copyText = copyText ?? attributedText.string
         self.attributedText = NSAttributedString(attributedString: attributedText)
         super.init(id: id, display: .inline)

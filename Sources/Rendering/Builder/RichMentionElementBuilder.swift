@@ -11,6 +11,7 @@ public final class RichMentionElementBuilder: RichContentElementBuilding {
         let displayText = presentation?.displayText ?? "@\(mention.name)"
         let isHighlighted = presentation?.isHighlighted
             ?? context.configuration.highlightedMentionIDs.contains(mention.id)
+        let action = node.action ?? RichAction(.mention(id: mention.id))
         let element: RichElement
         if isHighlighted {
             let badgeHeight = ceil(context.configuration.lineHeight)
@@ -30,7 +31,7 @@ public final class RichMentionElementBuilder: RichContentElementBuilding {
                     right: context.needsTrailingInlineSpacing ? spacing : 0
                 ),
                 cornerRadius: badgeHeight / 2,
-                actionIdentifier: "mention:\(mention.id)",
+                action: action,
                 copyText: displayText
             )
         } else {
@@ -42,7 +43,7 @@ public final class RichMentionElementBuilder: RichContentElementBuilding {
                 backgroundColor: .clear,
                 contentInsets: .zero,
                 cornerRadius: 0,
-                actionIdentifier: "mention:\(mention.id)",
+                action: action,
                 copyText: displayText
             )
         }

@@ -1,206 +1,172 @@
 import UIKit
 
+enum RichSelectionState: Equatable {
+    case idle
+    case selected(RichSemanticRange)
+    case longPressing(anchor: RichSemanticRange, current: RichSemanticRange)
+    case dragging(handle: RichSelectionHandleKind, anchor: RichSemanticPosition, current: RichSemanticRange)
+
+    var current: RichSemanticRange? {
+        switch self {
+        case .idle: nil
+        case let .selected(range), let .longPressing(_, range), let .dragging(_, _, range): range
+        }
+    }
+
+    mutating func beginDrag(_ handle: RichSelectionHandleKind) {
+        guard case let .selected(range) = self else { return }
+        self = .dragging(handle: handle, anchor: handle == .start ? range.end : range.start, current: range)
+    }
+
+    mutating func extend(to range: RichSemanticRange) {
+        switch self {
+        case let .longPressing(anchor, _): self = .longPressing(anchor: anchor, current: range)
+        case let .dragging(handle, anchor, _): self = .dragging(handle: handle, anchor: anchor, current: range)
+        default: break
+        }
+    }
+
+    mutating func finish() {
+        if let current { self = .selected(current) }
+    }
+}
+
 @MainActor
 final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
-    var isEnabled = true {
-        didSet {
-            longPressGesture.isEnabled = isEnabled
-            if !isEnabled { clearSelection() }
+    var isEnabled: Bool {
+        get { longPressGesture.isEnabled }
+        set {
+            longPressGesture.isEnabled = newValue
+            if !newValue { clearSelection() }
         }
     }
 
     private weak var hostView: RichTextView?
     private var layout: RichTextLayout?
-    private var selectedGlobalRange: NSRange?
-    private var selectedSemanticRange: RichSemanticRange?
-    private var activeCursor: RichSelectionCursor?
-    private var dragAnchorPosition: Int?
+    private(set) var state = RichSelectionState.idle
+    private weak var selectionWindow: UIWindow?
+    private var highlightView: RichSelectionHighlightView?
+    private var handleOverlay: RichSelectionHandleOverlay?
+    private var boundaries: (start: CGRect, end: CGRect)?
+    private var displayLink: CADisplayLink?
+    private var dragWindowPoint: CGPoint?
     private var loupeSession: RichTextLoupeSession?
-    private var prioritizedScrollViewIDs = Set<ObjectIdentifier>()
-    private var touchCancellationSuspendedScrollViews: [(scrollView: UIScrollView, previous: Bool)] = []
-    private var lastDraggedHandleIsStart: Bool?
-    private var longPressAnchorRange: NSRange?
-    private var autoScrollLink: CADisplayLink?
-    private weak var autoScrollScrollView: UIScrollView?
-    private var autoScrollWindowPoint: CGPoint?
     private lazy var selectionFeedback = UISelectionFeedbackGenerator()
+    private let competingGestures = NSHashTable<UIGestureRecognizer>.weakObjects()
+    private lazy var longPressGesture: UILongPressGestureRecognizer = {
+        let gesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
+        gesture.minimumPressDuration = 0.35
+        gesture.delegate = self
+        return gesture
+    }()
 
     private static let autoScrollEdgeInset: CGFloat = 64
     private static let autoScrollMinimumSpeed: CGFloat = 2
     private static let autoScrollMaximumSpeed: CGFloat = 16
 
-    private lazy var overlayView: RichSelectionOverlayView = {
-        let view = RichSelectionOverlayView(frame: .zero)
-        view.isHidden = true
-        return view
-    }()
-
-    private lazy var longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
-    private lazy var tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-    private lazy var handlePanGesture: UIPanGestureRecognizer = {
-        let gesture = UIPanGestureRecognizer(
-            target: self,
-            action: #selector(handleHandlePan(_:))
-        )
-        gesture.maximumNumberOfTouches = 1
-        gesture.delegate = self
-        // NOTE: 默认 true 会在 begin 时给 hostView 补发 touchesCancelled，经 cancelHandleDrag
-        // 清空 activeCursor，后续 .changed 全被 moveHandleDrag 挡掉，表现为选区只挪一行就卡死。
-        gesture.cancelsTouchesInView = false
-        return gesture
-    }()
-
     init(hostView: RichTextView) {
         self.hostView = hostView
         super.init()
-        overlayView.frame = hostView.bounds
-        overlayView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        hostView.addSubview(overlayView)
-        longPressGesture.minimumPressDuration = 0.35
-        longPressGesture.delegate = self
-        tapGesture.delegate = self
+        longPressGesture.isEnabled = hostView.isTextSelectionEnabled
         hostView.addGestureRecognizer(longPressGesture)
-        hostView.addGestureRecognizer(tapGesture)
+        if let layout = hostView.currentLayout { apply(layout: layout) }
     }
 
-    var selectionLongPressGestureRecognizer: UILongPressGestureRecognizer {
-        longPressGesture
+    func prioritizeSelection(over gesture: UIGestureRecognizer) {
+        competingGestures.add(gesture)
     }
 
-    func apply(layout: RichTextLayout) {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === longPressGesture && competingGestures.contains(otherGestureRecognizer)
+    }
+
+    func apply(layout: RichTextLayout?) {
+        let previousRoot = self.layout?.rootElementID
         self.layout = layout
-        guard let selectedSemanticRange,
-              let rebasedRange = globalRange(for: selectedSemanticRange) else {
+        guard state != .idle else { return }
+        guard let layout, previousRoot == layout.rootElementID, let current = state.current,
+              let range = globalRange(for: current) else {
             clearSelection()
             return
         }
-        selectedGlobalRange = rebasedRange
-        updateOverlay()
+        switch state {
+        case let .longPressing(anchor, _) where globalRange(for: anchor) == nil:
+            clearSelection()
+        case let .dragging(_, anchor, _) where globalPosition(for: anchor) == nil:
+            clearSelection()
+        default:
+            updateOverlay(for: range)
+        }
     }
 
     func clearSelection() {
-        selectedGlobalRange = nil
-        selectedSemanticRange = nil
-        activeCursor = nil
-        dragAnchorPosition = nil
-        lastDraggedHandleIsStart = nil
-        longPressAnchorRange = nil
-        stopAutoScroll()
-        invalidateLoupeSession()
-        overlayView.update(rects: [], startHandleRect: nil, endHandleRect: nil)
-        overlayView.isHidden = true
-        handlePanGesture.view?.removeGestureRecognizer(handlePanGesture)
-        // NOTE: 手势从 window 摘除后，祖先 scrollView 上的 require(toFail:) 随之失效，
-        // 必须清掉去重集合，否则下次选中会跳过重建，滚动重新抢走手柄拖拽。
-        prioritizedScrollViewIDs.removeAll()
-        restoreAncestorTouchCancellation()
+        guard state != .idle else { return }
+        state = .idle
+        removeSelectionViews()
         if let hostView {
             hostView.selectionMenuPresenter?.dismissCopyMenu(from: hostView)
             hostView.notifySelectionChanged(nil)
         }
     }
 
+    func removeSelectionViews() {
+        displayLink?.invalidate()
+        displayLink = nil
+        endTracking()
+        highlightView?.removeFromSuperview()
+        highlightView = nil
+        handleOverlay?.removeFromSuperview()
+        handleOverlay = nil
+        boundaries = nil
+        if let selectionWindow { RichSelectionWindowCoordinator.release(selectionWindow, for: self) }
+        selectionWindow = nil
+    }
+
+    func didMoveToWindow() {
+        if selectionWindow !== hostView?.window { clearSelection() }
+    }
+
     func updateAppearance() {
-        overlayView.updateAppearance()
-    }
-
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-    ) -> Bool {
-        // handlePanGesture 装在 window 上、只在贴近选区游标时才 begin（见 gestureRecognizerShouldBegin），
-        // 允许它与外层列表的滚动手势共存，避免选中态下把全局 pan 全部吃掉导致外层列表拖不动。
-        gestureRecognizer === handlePanGesture || otherGestureRecognizer === handlePanGesture
-    }
-
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
-    ) -> Bool {
-        guard gestureRecognizer === tapGesture,
-              let hostView,
-              let otherView = otherGestureRecognizer.view,
-              otherView !== hostView else { return false }
-        return otherView.isDescendant(of: hostView)
+        highlightView?.updateAppearance()
+        handleOverlay?.tintColor = hostView?.tintColor
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        if gestureRecognizer === handlePanGesture {
-            guard selectedGlobalRange != nil, let hostView else { return false }
-            return isNearSelectionHandle(
-                gestureRecognizer.location(in: hostView)
-            )
-        }
-        guard selectedGlobalRange != nil,
-              let hostView,
-              gestureRecognizer === tapGesture || gestureRecognizer === longPressGesture else {
-            return true
-        }
-        return !isNearSelectionHandle(gestureRecognizer.location(in: hostView))
+        guard gestureRecognizer === longPressGesture, let hostView else { return false }
+        return initialSelectionRange(at: gestureRecognizer.location(in: hostView), policy: hostView.initialSelectionPolicy) != nil
     }
 
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldReceive touch: UITouch
-    ) -> Bool {
-        // handlePanGesture 装在 window 上，其入口已由 gestureRecognizerShouldBegin 的
-        // isNearSelectionHandle 把关，这里放行所有 touch，避免 touch 落在 hostView 子视图
-        // （attachment / image 等）上时被误拒，导致第二次拖拽 handle 拖不动。
-        if gestureRecognizer === handlePanGesture { return true }
-        guard let hostView, let touchedView = touch.view else { return true }
-        return touchedView === hostView || !touchedView.isDescendant(of: hostView)
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        touch.view === hostView
     }
 
     @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
-        guard isEnabled, let hostView else { return }
+        guard let hostView else { return }
         let point = gesture.location(in: hostView)
         switch gesture.state {
-        case .began:
-            selectionFeedback.prepare()
-            guard let initialRange = initialSelectionRange(
-                at: point,
-                policy: hostView.initialSelectionPolicy
-            ) else { return }
-            longPressAnchorRange = initialRange
-            lastDraggedHandleIsStart = nil
-            updateSelection(initialRange)
-            selectionFeedback.selectionChanged()
-            updateOverlay(showMenu: false)
-            beginLoupeSession(at: point, in: hostView)
-        case .changed:
-            extendLongPressSelection(to: point)
+        case .began: beginLongPress(at: point)
+        case .changed: extendSelection(to: point)
         case .ended, .cancelled, .failed:
-            guard longPressAnchorRange != nil else { return }
-            longPressAnchorRange = nil
-            stopAutoScroll()
-            invalidateLoupeSession()
-            guard selectedGlobalRange != nil else { return }
-            updateOverlay(showMenu: true)
-        default:
-            break
+            if case .longPressing = state { finishInteraction() }
+        default: break
         }
     }
 
-    // 长按不松手继续滑动：以初始选区为锚向两侧扩展，滑回锚内则还原为初始选区。
-    private func extendLongPressSelection(to point: CGPoint) {
-        guard let anchor = longPressAnchorRange else { return }
-        updateAutoScroll(for: point)
-        guard let position = closestGlobalPosition(at: point) else { return }
-        let range: NSRange?
-        if position <= anchor.location {
-            range = normalizedSelectionRange(between: NSMaxRange(anchor), and: position)
-            lastDraggedHandleIsStart = true
-        } else if position >= NSMaxRange(anchor) {
-            range = normalizedSelectionRange(between: anchor.location, and: position)
-            lastDraggedHandleIsStart = false
-        } else {
-            range = anchor
-        }
-        guard let range else { return }
-        if updateSelection(range) {
-            updateOverlay(showMenu: false)
-        }
-        moveLoupeSession(to: point)
+    func beginLongPress(at point: CGPoint) {
+        guard isEnabled, let hostView, let window = hostView.window,
+              let range = initialSelectionRange(at: point, policy: hostView.initialSelectionPolicy),
+              let anchor = semanticRange(for: range) else { return }
+        selectionFeedback.prepare()
+        endTracking()
+        state = .longPressing(anchor: anchor, current: anchor)
+        selectionWindow = window
+        RichSelectionWindowCoordinator.claim(window, for: self)
+        guard case .longPressing = state else { return }
+        updateOverlay(for: range)
+        guard case .longPressing = state else { return }
+        selectionFeedback.selectionChanged()
+        beginLoupeSession(at: point, in: hostView)
     }
 
     private func initialSelectionRange(
@@ -212,7 +178,7 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
             guard selectableHit(at: point) else { return nil }
             return selectableGlobalRange
         case .currentLine:
-            guard let hit = textHit(at: point),
+            guard let hit = layout?.textHit(at: point),
                   let localRange = hit.runBox.layout.lineRange(at: hit.localPoint) else {
                 return nil
             }
@@ -224,7 +190,7 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
             if let range = layout?.listItemSelectionRange(at: point) {
                 return range
             }
-            guard let hit = textHit(at: point),
+            guard let hit = layout?.textHit(at: point),
                   let localRange = hit.runBox.layout.paragraphRange(at: hit.localPoint)
                       ?? hit.runBox.layout.lineRange(at: hit.localPoint) else {
                 return nil
@@ -234,7 +200,7 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
                 length: localRange.length
             )
         case .word:
-            guard let hit = textHit(at: point),
+            guard let hit = layout?.textHit(at: point),
                   let localRange = hit.runBox.layout.wordRange(at: hit.localPoint)
                       ?? hit.runBox.layout.lineRange(at: hit.localPoint) else {
                 return nil
@@ -246,147 +212,119 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
         }
     }
 
-    func beginHandleDrag(at point: CGPoint) -> Bool {
-        guard isEnabled, let hostView, let selectedGlobalRange,
-              let cursor = overlayView.cursor(at: point) else { return false }
-        activeCursor = cursor
-        lastDraggedHandleIsStart = cursor.kind == .start
-        dragAnchorPosition = cursor.kind == .start
-            ? NSMaxRange(selectedGlobalRange)
-            : selectedGlobalRange.location
-        hostView.selectionMenuPresenter?.dismissCopyMenu(from: hostView)
-        beginLoupeSession(at: point, in: hostView)
-        return true
-    }
-
-    func shouldRouteHandleTouch(at point: CGPoint) -> Bool {
-        // 不再以 handlePanGesture 是否已安装为前置条件：即使 window 级手势已安装，
-        // 也保留 hostView 自身的 touch routing 作为兜底，防止手势被外层拦截后 handle 拖不动。
-        isEnabled
-            && selectedGlobalRange != nil
-            && isNearSelectionHandle(point)
-    }
-
-    func isTouchingSelectionHandle(at point: CGPoint) -> Bool {
-        isEnabled && selectedGlobalRange != nil && isNearSelectionHandle(point)
-    }
-
-    @objc private func handleHandlePan(_ gesture: UIPanGestureRecognizer) {
-        guard let hostView else { return }
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        guard let handle = gesture.view as? RichSelectionHandleView, let hostView else { return }
         let point = gesture.location(in: hostView)
+        if gesture.state == .began {
+            beginHandleDrag(handle.kind, at: point)
+            return
+        }
+        guard case let .dragging(active, _, _) = state, active == handle.kind else { return }
         switch gesture.state {
-        case .began:
-            _ = beginHandleDrag(at: point)
-        case .changed:
-            moveHandleDrag(to: point, finished: false)
+        case .changed: extendSelection(to: point)
         case .ended:
-            endHandleDrag(at: point, shouldUpdate: true)
-        case .cancelled, .failed:
-            cancelHandleDrag()
-        default:
-            break
+            extendSelection(to: point)
+            finishInteraction()
+        case .cancelled, .failed: finishInteraction()
+        default: break
         }
     }
 
-    func moveHandleDrag(to point: CGPoint, finished: Bool) {
-        guard activeCursor != nil else { return }
-        if finished {
-            stopAutoScroll()
-        } else {
-            updateAutoScroll(for: point)
-        }
-        guard let position = closestGlobalPosition(at: point),
-              let dragAnchorPosition,
-              let range = normalizedSelectionRange(
-                  between: dragAnchorPosition,
-                  and: position
-              ) else { return }
-        let changed = updateSelection(range)
-        if changed || finished {
-            updateOverlay(showMenu: finished)
-        }
-        if finished {
-            activeCursor = nil
-            self.dragAnchorPosition = nil
-            invalidateLoupeSession()
-        } else {
-            moveLoupeSession(to: point)
-        }
+    func beginHandleDrag(_ handle: RichSelectionHandleKind, at point: CGPoint) {
+        guard case .selected = state, let hostView else { return }
+        state.beginDrag(handle)
+        hostView.selectionMenuPresenter?.dismissCopyMenu(from: hostView)
+        guard case .dragging = state else { return }
+        beginLoupeSession(at: point, in: hostView)
     }
 
-    func endHandleDrag(at point: CGPoint, shouldUpdate: Bool) {
-        if shouldUpdate {
-            moveHandleDrag(to: point, finished: false)
+    func extendSelection(to point: CGPoint) {
+        guard let hostView, let window = selectionWindow, let position = closestGlobalPosition(at: point) else { return }
+        let range: NSRange?
+        switch state {
+        case let .longPressing(anchor, _):
+            guard let initial = globalRange(for: anchor) else { return }
+            let lower = min(initial.location, position)
+            let upper = max(NSMaxRange(initial), position)
+            range = normalizedSelectionRange(between: lower, and: upper)
+        case let .dragging(_, anchor, _):
+            guard let fixed = globalPosition(for: anchor) else { return }
+            range = normalizedSelectionRange(between: fixed, and: position)
+        default: return
         }
-        activeCursor = nil
-        dragAnchorPosition = nil
-        stopAutoScroll()
-        invalidateLoupeSession()
-        updateOverlay(showMenu: true)
+        dragWindowPoint = hostView.convert(point, to: window)
+        if let range, let current = semanticRange(for: range), state.current != current {
+            state.extend(to: current)
+            updateOverlay(for: range)
+        }
+        loupeSession?.move(to: point)
     }
 
-    func cancelHandleDrag() {
-        activeCursor = nil
-        dragAnchorPosition = nil
-        stopAutoScroll()
-        invalidateLoupeSession()
+    func finishInteraction() {
+        guard let current = state.current, let range = globalRange(for: current) else { return }
+        let menuHandle: RichSelectionHandleKind?
+        switch state {
+        case let .dragging(_, anchor, _):
+            menuHandle = globalPosition(for: anchor) == range.location ? .end : .start
+        case let .longPressing(anchor, _):
+            if anchor.start != current.start { menuHandle = .start }
+            else if anchor.end != current.end { menuHandle = .end }
+            else { menuHandle = nil }
+        default: return
+        }
+        state.finish()
+        endTracking()
+        updateOverlay(for: range, showMenu: true, menuHandle: menuHandle)
     }
 
-    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
-        guard let hostView else { return }
-        let point = gesture.location(in: hostView)
-        if selectedGlobalRange != nil, isNearSelectionHandle(point) {
-            return
-        }
-        if selectedGlobalRange != nil {
-            clearSelection()
-            return
-        }
-        guard let hit = textHit(at: point) else {
-            hostView.notifyUnconsumedTap()
-            return
-        }
-        if let actionIdentifier = hit.runBox.actionIdentifier(at: hit.localPoint) {
-            hostView.activate(actionIdentifier)
-        } else {
-            hostView.notifyUnconsumedTap()
-        }
+    private func endTracking() {
+        dragWindowPoint = nil
+        loupeSession?.invalidate()
+        loupeSession = nil
     }
 
-    private func updateOverlay(showMenu: Bool = false) {
-        guard let hostView, let selectedGlobalRange else { return }
-        let rects = selectionRects(for: selectedGlobalRange)
+    func isSelectionHandleTouch(atWindowPoint point: CGPoint) -> Bool {
+        guard let handleOverlay, let window = selectionWindow else { return false }
+        return handleOverlay.hitTest(handleOverlay.convert(point, from: window), with: nil) != nil
+    }
+
+    private func updateOverlay(for range: NSRange, showMenu: Bool = false, menuHandle: RichSelectionHandleKind? = nil) {
+        guard let hostView, let window = selectionWindow else { return }
+        let rects = selectionRects(for: range)
         guard let fallbackFirst = rects.first, let fallbackLast = rects.last else {
             clearSelection()
             return
         }
-        let first = boundaryRect(at: selectedGlobalRange.location, takingLast: false) ?? fallbackFirst
-        let last = boundaryRect(at: NSMaxRange(selectedGlobalRange) - 1, takingLast: true) ?? fallbackLast
-        overlayView.isHidden = false
-        hostView.bringSubviewToFront(overlayView)
-        installHandlePanGestureIfNeeded()
-        overlayView.update(
-            rects: rects,
-            startHandleRect: first,
-            endHandleRect: last
-        )
-        let selection = selection(for: selectedGlobalRange)
+        let first = boundaryRect(at: range.location, takingLast: false) ?? fallbackFirst
+        let last = boundaryRect(at: NSMaxRange(range) - 1, takingLast: true) ?? fallbackLast
+        boundaries = (first, last)
+        if highlightView == nil {
+            let highlight = RichSelectionHighlightView(frame: hostView.bounds)
+            hostView.addSubview(highlight)
+            highlightView = highlight
+            let overlay = RichSelectionHandleOverlay(target: self, action: #selector(handlePan(_:)))
+            overlay.tintColor = hostView.tintColor
+            window.addSubview(overlay)
+            handleOverlay = overlay
+            let link = CADisplayLink(target: self, selector: #selector(displayTick))
+            link.add(to: .main, forMode: .common)
+            displayLink = link
+        }
+        if let highlightView {
+            hostView.bringSubviewToFront(highlightView)
+            highlightView.update(rects: rects)
+        }
+        syncHandles(in: enclosingScrollView())
+        let selection = selection(for: range)
         hostView.notifySelectionChanged(selection)
-        if showMenu, let selection {
-            // 菜单跟随最后调整的那个手柄；长按初次选中时没有拖过手柄，仍按整段选区居中。
+        if showMenu, let selection, state == .selected(selection.semanticRange) {
             let sourceRect: CGRect
-            switch lastDraggedHandleIsStart {
-            case .some(true):
-                sourceRect = first
-            case .some(false):
-                sourceRect = last
-            case .none:
-                sourceRect = rects.reduce(first) { $0.union($1) }
+            switch menuHandle {
+            case .start: sourceRect = first
+            case .end: sourceRect = last
+            case nil: sourceRect = rects.reduce(first) { $0.union($1) }
             }
-            hostView.presentCopyMenu(
-                sourceRect: sourceRect,
-                selection: selection
-            )
+            hostView.presentCopyMenu(sourceRect: sourceRect, selection: selection)
         }
     }
 
@@ -455,7 +393,7 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
     }
 
     private func selection(for globalRange: NSRange) -> RichSelection? {
-        guard let semanticRange = semanticRange(for: globalRange) else { return nil }
+        guard let semanticRange = state.current else { return nil }
         return RichSelection(
             globalRange: globalRange,
             semanticRange: semanticRange,
@@ -579,14 +517,6 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
         return nil
     }
 
-    @discardableResult
-    private func updateSelection(_ globalRange: NSRange) -> Bool {
-        guard selectedGlobalRange.map({ !NSEqualRanges($0, globalRange) }) ?? true else { return false }
-        selectedGlobalRange = globalRange
-        selectedSemanticRange = semanticRange(for: globalRange)
-        return true
-    }
-
     private func semanticPosition(at globalOffset: Int, trailing: Bool = false) -> RichSemanticPosition? {
         guard let layout else { return nil }
         for runBox in layout.textRunBoxes {
@@ -633,7 +563,7 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
         }
         guard let normalizedLower = intersections.map(\.location).min(),
               let normalizedUpper = intersections.map(NSMaxRange).max(),
-              normalizedUpper > normalizedLower else { return selectedGlobalRange }
+              normalizedUpper > normalizedLower else { return nil }
         return NSRange(location: normalizedLower, length: normalizedUpper - normalizedLower)
     }
 
@@ -662,13 +592,6 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
         return dx * dx + dy * dy
     }
 
-    private func textHit(at point: CGPoint) -> (runBox: RichTextRunBox, localPoint: CGPoint)? {
-        guard let runBox = layout?.textRunBoxes.first(where: { $0.frame.insetBy(dx: -12, dy: -8).contains(point) }) else {
-            return nil
-        }
-        return (runBox, CGPoint(x: point.x - runBox.frame.minX, y: point.y - runBox.frame.minY))
-    }
-
     private var selectableRanges: [NSRange]? {
         layout?.runBoxes.compactMap(selectableRange(for:))
     }
@@ -695,92 +618,37 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
         }
     }
 
-    private func isNearSelectionHandle(_ point: CGPoint) -> Bool {
-        overlayView.cursor(at: point) != nil
-    }
-
-    private func installHandlePanGestureIfNeeded() {
-        guard let window = hostView?.window,
-              handlePanGesture.view !== window else { return }
-        handlePanGesture.view?.removeGestureRecognizer(handlePanGesture)
-        window.addGestureRecognizer(handlePanGesture)
-        prioritizeHandlePanOverAncestorScrolling()
-    }
-
-    private func prioritizeHandlePanOverAncestorScrolling() {
-        var candidate = hostView?.superview
-        while let view = candidate {
-            if let scrollView = view as? UIScrollView {
-                let identifier = ObjectIdentifier(scrollView)
-                if prioritizedScrollViewIDs.insert(identifier).inserted {
-                    scrollView.panGestureRecognizer.require(
-                        toFail: handlePanGesture
-                    )
-                    suspendTouchCancellation(on: scrollView)
-                }
+    @objc private func displayTick() {
+        guard let hostView, let window = selectionWindow else {
+            clearSelection()
+            return
+        }
+        let scrollView = enclosingScrollView()
+        if let scrollView, let dragWindowPoint {
+            let offset = autoScrollOffset(in: scrollView, windowPoint: dragWindowPoint)
+            if offset != scrollView.contentOffset.y {
+                scrollView.contentOffset.y = offset
+                extendSelection(to: hostView.convert(dragWindowPoint, from: window))
             }
-            candidate = view.superview
         }
+        syncHandles(in: scrollView)
     }
 
-    // NOTE: 手柄拖拽还有一条不依赖手势仲裁的原始触摸通路（RichTextView.touchesBegan → beginHandleDrag），
-    // 但 scrollView 默认会在自身滚动起手时取消子视图触摸，把这条通路掐断，表现为「有时拖不动」。
-    // 选中期间挂起取消行为，选区清除后原样恢复。
-    private func suspendTouchCancellation(on scrollView: UIScrollView) {
-        touchCancellationSuspendedScrollViews.append(
-            (scrollView, scrollView.canCancelContentTouches)
-        )
-        scrollView.canCancelContentTouches = false
-    }
-
-    private func restoreAncestorTouchCancellation() {
-        for entry in touchCancellationSuspendedScrollViews {
-            entry.scrollView.canCancelContentTouches = entry.previous
+    private func syncHandles(in scrollView: UIScrollView?) {
+        guard let window = selectionWindow, let hostView, let handleOverlay, let boundaries else { return }
+        var visible = window.bounds
+        if let scrollView {
+            visible = visible.intersection(scrollView.convert(scrollView.bounds.inset(by: scrollView.safeAreaInsets), to: window))
+            var ancestor = scrollView.superview
+            while let view = ancestor, view !== window {
+                if view.clipsToBounds { visible = visible.intersection(view.convert(view.bounds, to: window)) }
+                ancestor = view.superview
+            }
         }
-        touchCancellationSuspendedScrollViews.removeAll()
-    }
-
-    private func updateAutoScroll(for point: CGPoint) {
-        guard let hostView, let scrollView = enclosingScrollView() else {
-            stopAutoScroll()
-            return
-        }
-        autoScrollScrollView = scrollView
-        autoScrollWindowPoint = hostView.convert(point, to: nil)
-        guard autoScrollLink == nil else { return }
-        let link = CADisplayLink(
-            target: self,
-            selector: #selector(handleAutoScrollTick)
-        )
-        link.add(to: .main, forMode: .common)
-        autoScrollLink = link
-    }
-
-    private func stopAutoScroll() {
-        autoScrollLink?.invalidate()
-        autoScrollLink = nil
-        autoScrollScrollView = nil
-        autoScrollWindowPoint = nil
-    }
-
-    @objc private func handleAutoScrollTick() {
-        // 两条拖拽通路的终止路径都会清各自锚；此处兜底自停，避免 CADisplayLink 持有 self 泄漏。
-        guard activeCursor != nil || longPressAnchorRange != nil,
-              let hostView,
-              let scrollView = autoScrollScrollView,
-              let windowPoint = autoScrollWindowPoint else {
-            stopAutoScroll()
-            return
-        }
-        let offsetY = autoScrollOffset(in: scrollView, windowPoint: windowPoint)
-        guard offsetY != scrollView.contentOffset.y else { return }
-        scrollView.contentOffset.y = offsetY
-        let hostPoint = hostView.convert(windowPoint, from: nil)
-        if activeCursor != nil {
-            moveHandleDrag(to: hostPoint, finished: false)
-        } else {
-            extendLongPressSelection(to: hostPoint)
-        }
+        let frame = visible.isNull ? .zero : visible
+        if handleOverlay.frame != frame { handleOverlay.frame = frame }
+        handleOverlay.position(start: hostView.convert(boundaries.start, to: handleOverlay),
+                               end: hostView.convert(boundaries.end, to: handleOverlay))
     }
 
     private func autoScrollOffset(
@@ -788,7 +656,7 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
         windowPoint: CGPoint
     ) -> CGFloat {
         let inset = scrollView.adjustedContentInset
-        let pointInScroll = scrollView.convert(windowPoint, from: nil)
+        let pointInScroll = scrollView.convert(windowPoint, from: selectionWindow)
         let trigger = Self.autoScrollEdgeInset
         let topEdge = scrollView.contentOffset.y + inset.top
         let bottomEdge = scrollView.contentOffset.y
@@ -818,26 +686,21 @@ final class RichSelectionController: NSObject, UIGestureRecognizerDelegate {
     private func enclosingScrollView() -> UIScrollView? {
         var candidate = hostView?.superview
         while let view = candidate {
-            if let scrollView = view as? UIScrollView { return scrollView }
+            if let scroll = view as? UIScrollView, scroll.isScrollEnabled {
+                let insets = scroll.adjustedContentInset
+                if scroll.alwaysBounceVertical || scroll.contentSize.height + insets.top + insets.bottom > scroll.bounds.height {
+                    return scroll
+                }
+            }
             candidate = view.superview
         }
         return nil
     }
 
     private func beginLoupeSession(at point: CGPoint, in hostView: UIView) {
-        guard #available(iOS 17.0, *) else { return }
-        let session = RichTextLoupeSession()
-        session.begin(at: point, in: hostView)
-        loupeSession = session
-    }
-
-    private func moveLoupeSession(to point: CGPoint) {
+        guard #available(iOS 17.0, *), let window = hostView.window, !window.isHidden else { return }
+        loupeSession = UITextLoupeSession.begin(at: point, fromSelectionWidgetView: nil, in: hostView)
         loupeSession?.move(to: point)
-    }
-
-    private func invalidateLoupeSession() {
-        loupeSession?.invalidate()
-        loupeSession = nil
     }
 }
 

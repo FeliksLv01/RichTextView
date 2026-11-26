@@ -66,6 +66,7 @@ open class RichElement: @unchecked Sendable {
 }
 
 public final class RichContainerElement: RichElement, @unchecked Sendable {
+    private(set) var codeBlockText: String?
     private let storedChildren: [RichElement]
     public override var children: [RichElement] { storedChildren }
     public let spacing: CGFloat
@@ -87,8 +88,13 @@ public final class RichContainerElement: RichElement, @unchecked Sendable {
         super.init(id: id, display: display)
     }
 
+    convenience init(codeBlockID: String, code: String, children: [RichElement], decoration: RichContainerDecoration? = nil) {
+        self.init(id: codeBlockID, children: children, decoration: decoration)
+        codeBlockText = code
+    }
+
     public override func replacingChildren(_ children: [RichElement]) -> RichElement {
-        RichContainerElement(
+        let container = RichContainerElement(
             id: id,
             children: children,
             display: display,
@@ -96,6 +102,8 @@ public final class RichContainerElement: RichElement, @unchecked Sendable {
             contentInsets: contentInsets,
             decoration: decoration
         )
+        container.codeBlockText = codeBlockText
+        return container
     }
 }
 

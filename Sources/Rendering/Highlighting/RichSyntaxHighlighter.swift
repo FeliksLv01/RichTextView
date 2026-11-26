@@ -24,12 +24,35 @@ final class RichSyntaxHighlighter: @unchecked Sendable {
     private let query: Query?
     private let maximumCachedCodeBlocks: Int
     private var states: [String: State] = [:]
+    private struct ResultKey: Hashable {
+        // Swift identifier aliases share a grammar. Preserve the exact UTF-8 spelling.
+        let source: Data
+        let themeID: UUID
+    }
+    private var results: [ResultKey: (text: NSAttributedString, lastAccess: UInt64)] = [:]
+    private var memoryObserver: NSObjectProtocol?
     private var accessCounter: UInt64 = 0
 
     init(maximumCachedCodeBlocks: Int) {
         language = Language(tree_sitter_swift())
         query = try? Query(language: language, data: RichSwiftHighlightQuery.data)
         self.maximumCachedCodeBlocks = max(1, maximumCachedCodeBlocks)
+        memoryObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
+                                                                object: nil, queue: nil) { [weak self] _ in
+            guard let self else { return }
+            queue.sync {
+                self.states.removeAll()
+                self.results.removeAll()
+            }
+        }
+    }
+
+    deinit {
+        if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
+    }
+
+    func releaseIncrementalState(for nodeID: String) {
+        queue.sync { states[nodeID] = nil }
     }
 
     func highlight(code: String, language: String, nodeID: String, theme: RichCodeHighlightTheme) -> NSAttributedString? {
@@ -41,6 +64,12 @@ final class RichSyntaxHighlighter: @unchecked Sendable {
             )
         }
         return queue.sync {
+            let key = ResultKey(source: Data(code.utf8), themeID: theme.cacheID)
+            accessCounter &+= 1
+            if let cached = results[key] {
+                results[key]?.lastAccess = accessCounter
+                return cached.text
+            }
             guard let query, let state = state(for: nodeID), let tree = updatedTree(for: code, state: state),
                   let root = tree.rootNode else { return nil }
             let value = baseAttributedString(code: code, theme: theme)
@@ -53,7 +82,13 @@ final class RichSyntaxHighlighter: @unchecked Sendable {
                 if let color = style.backgroundColor { value.addAttribute(.backgroundColor, value: color, range: highlight.range) }
                 if let font = style.font { value.addAttribute(.font, value: font, range: highlight.range) }
             }
-            return value
+            let result = NSAttributedString(attributedString: value)
+            if results.count >= maximumCachedCodeBlocks,
+               let oldest = results.min(by: { $0.value.lastAccess < $1.value.lastAccess })?.key {
+                results.removeValue(forKey: oldest)
+            }
+            results[key] = (result, accessCounter)
+            return result
         }
     }
 
@@ -75,7 +110,7 @@ final class RichSyntaxHighlighter: @unchecked Sendable {
 
     private func updatedTree(for source: String, state: State) -> MutableTree? {
         defer { state.previousSource = source }
-        guard source.hasPrefix(state.previousSource), let previousTree = state.previousTree else {
+        guard source.utf8.starts(with: state.previousSource.utf8), let previousTree = state.previousTree else {
             let tree = state.parser.parse(source)
             state.previousTree = tree
             return tree
@@ -120,9 +155,13 @@ final class RichBuiltInCodeBlockHighlightingPlugin: RichCodeBlockHighlightingPlu
     private let theme: RichCodeHighlightTheme
     private let highlighter: RichSyntaxHighlighter
 
-    init(theme: RichCodeHighlightTheme, maximumCachedCodeBlocks: Int) {
+    init(theme: RichCodeHighlightTheme, highlighter: RichSyntaxHighlighter) {
         self.theme = theme
-        highlighter = RichSyntaxHighlighter(maximumCachedCodeBlocks: maximumCachedCodeBlocks)
+        self.highlighter = highlighter
+    }
+
+    func releaseIncrementalState(for nodeID: String) {
+        highlighter.releaseIncrementalState(for: nodeID)
     }
 
     func codeBlockPresentation(for code: String, language: String, nodeID: String) -> RichCodeBlockPresentation? {

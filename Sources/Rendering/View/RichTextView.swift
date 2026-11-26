@@ -2,14 +2,18 @@ import UIKit
 
 @MainActor
 public final class RichTextView: UIView, RichRenderLayerDelegate {
-    private struct SimpleTextAction {
-        let identifier: String
-        let range: NSRange
-    }
+    private typealias SimpleTextAction = (action: RichAction, range: NSRange)
 
     private enum SimpleContent {
         case text(String)
         case attributedText(NSAttributedString)
+
+        var length: Int {
+            switch self {
+            case let .text(text): text.utf16.count
+            case let .attributedText(text): text.length
+            }
+        }
     }
 
     private struct DocumentContent {
@@ -29,30 +33,20 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
             }
         }
         set {
-            simpleTextActions.removeAll()
-            simpleTextActionHandlers.removeAll()
-            documentContent = nil
-            simpleContent = newValue.map(SimpleContent.text)
-            updateSimpleContent()
+            setSimpleContent(newValue.map(SimpleContent.text), actions: [])
         }
     }
 
     public var attributedText: NSAttributedString? {
         get {
+            guard let simpleContent else { return nil }
             switch simpleContent {
-            case let .text(text): makeSimpleAttributedText(from: text)
-            case let .attributedText(text): text
-            case nil: nil
+            case let .text(text): return applyingActions(to: makeSimpleAttributedText(from: text))
+            case let .attributedText(text): return applyingActions(to: text)
             }
         }
         set {
-            simpleTextActions.removeAll()
-            simpleTextActionHandlers.removeAll()
-            documentContent = nil
-            simpleContent = newValue.map {
-                SimpleContent.attributedText(NSAttributedString(attributedString: $0))
-            }
-            updateSimpleContent()
+            setSimpleContent(newValue.map { .attributedText(NSAttributedString(attributedString: $0)) }, actions: [])
         }
     }
 
@@ -81,13 +75,18 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
 
     public var isTextSelectionEnabled = false {
         didSet {
-            selectionController.isEnabled = isTextSelectionEnabled
-            if !isTextSelectionEnabled { selectionController.clearSelection() }
+            if isTextSelectionEnabled {
+                ensureSelectionController().isEnabled = true
+            } else {
+                selectionController?.isEnabled = false
+            }
         }
     }
     public var initialSelectionPolicy: RichInitialSelectionPolicy = .allContent
 
     public weak var interactionDelegate: RichTextViewInteractionDelegate?
+    /// Handles events after a range-specific closure and before the legacy handler or delegate.
+    public var actionEventHandler: ((RichTextView, RichActionEvent) -> Void)?
     public var actionHandler: ((RichTextView, String) -> Void)?
     public var didDisplay: (() -> Void)?
     public var selectionHandler: ((RichSelection?) -> Void)?
@@ -102,15 +101,24 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
     /// Fade only newly appended text. Existing content, layout and selection stay unchanged.
     public var animatesStreamingChanges = false
 
+    /// Kept for source compatibility. Bitmap updates always preserve the last completed frame.
     public var preservesRenderedContentDuringAsyncUpdates = true
 
     public private(set) var currentLayout: RichTextLayout?
     public private(set) var currentSnapshot: RichElementSnapshot?
     public private(set) var currentSelection: RichSelection?
 
+    lazy var codeCopyPasteboard: UIPasteboard = .general
+
     private let layoutEngine: RichTextLayoutEngine
     private lazy var attachmentManager = RichAttachmentManager(hostView: self)
-    private lazy var selectionController = RichSelectionController(hostView: self)
+    private var selectionController: RichSelectionController?
+    private let contentTapDelegate = RichContentTapDelegate()
+    private lazy var contentTapGesture: UITapGestureRecognizer = {
+        let gesture = UITapGestureRecognizer(target: self, action: #selector(handleContentTap(_:)))
+        gesture.delegate = contentTapDelegate
+        return gesture
+    }()
     private var layoutTask: Task<Void, Never>?
     private var generation: UInt = 0
     private var simpleContent: SimpleContent?
@@ -122,17 +130,18 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
     private var loadedImages: [String: UIImage] = [:]
     private var imageLoadTasks: [String: RichImageLoadTask] = [:]
     private var remoteImageIdentifiers = Set<String>()
-    private weak var activeSelectionTouch: UITouch?
-    private var selectionTouchStartPoint: CGPoint?
-    private var didMoveSelectionTouch = false
-    private var viewportObservations: [NSKeyValueObservation] = []
+    private var memoryWarningObserver: NSObjectProtocol?
+    private var documentRenderer: RichContentRenderer?
+    // Core Animation can request tiles on a background thread long after display() returns.
+    private var currentTileTask: RichRenderLayerDisplayTask?
+    private var imageRevision: UInt = 0
 
     // swiftlint:disable:next force_cast
     private var renderLayer: RichRenderLayer { layer as! RichRenderLayer }
 
     public init(
         frame: CGRect = .zero,
-        layoutEngine: RichTextLayoutEngine = RichTextLayoutEngine(),
+        layoutEngine: RichTextLayoutEngine = .shared,
         imageLoader: RichImageLoader? = nil
     ) {
         self.layoutEngine = layoutEngine
@@ -147,11 +156,19 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
     }
 
     deinit {
+        if let memoryWarningObserver { NotificationCenter.default.removeObserver(memoryWarningObserver) }
         layoutTask?.cancel()
+        if let selectionController {
+            if Thread.isMainThread {
+                MainActor.assumeIsolated { selectionController.removeSelectionViews() }
+            } else {
+                Task { @MainActor in selectionController.removeSelectionViews() }
+            }
+        }
     }
 
     public func apply(_ snapshot: RichElementSnapshot) {
-        documentContent = nil
+        resetDocumentContent()
         simpleContent = nil
         simpleTextActions.removeAll()
         simpleTextActionHandlers.removeAll()
@@ -176,20 +193,29 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         updateDocumentContent()
     }
 
+    public func setText(_ text: String, actions: [(action: RichAction, range: NSRange)]) {
+        setSimpleContent(.text(text), actions: actions)
+    }
+
+    public func setAttributedText(_ attributedText: NSAttributedString, actions: [(action: RichAction, range: NSRange)] = []) {
+        setSimpleContent(.attributedText(NSAttributedString(attributedString: attributedText)), actions: actions)
+    }
+
+    private func setSimpleContent(_ content: SimpleContent?, actions: [SimpleTextAction]) {
+        resetDocumentContent()
+        simpleContent = content
+        replaceSimpleTextActions(actions)
+    }
+
+    private func isValidActionRange(_ range: NSRange) -> Bool {
+        guard let length = simpleContent?.length else { return false }
+        return range.location >= 0 && range.length > 0 && range.location <= length && range.length <= length - range.location
+    }
+
     public func setTextAction(_ actionIdentifier: String, range: NSRange) {
-        guard let simpleContent else { return }
-        let textLength: Int
-        switch simpleContent {
-        case let .text(text): textLength = text.utf16.count
-        case let .attributedText(text): textLength = text.length
-        }
-        guard !actionIdentifier.isEmpty,
-              range.location >= 0,
-              range.length > 0,
-              NSMaxRange(range) <= textLength else { return }
+        guard let action = RichAction(legacyIdentifier: actionIdentifier), isValidActionRange(range) else { return }
         removeTextActions(intersecting: range)
-        simpleTextActions.append(SimpleTextAction(identifier: actionIdentifier, range: range))
-        simpleTextActions.sort { $0.range.location < $1.range.location }
+        simpleTextActions.append((action, range))
         updateSimpleContent()
     }
 
@@ -199,33 +225,27 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
     ) {
         let identifier = "simple-range-\(range.location)-\(range.length)"
         setTextAction(identifier, range: range)
-        guard simpleTextActions.contains(where: { $0.identifier == identifier }) else {
+        guard simpleTextActions.contains(where: { $0.action.legacyIdentifier == identifier }) else {
             return
         }
         simpleTextActionHandlers[identifier] = handler
     }
 
     public func setTextActions(_ actions: [(identifier: String, range: NSRange)]) {
-        guard let simpleContent else { return }
-        let textLength: Int
-        switch simpleContent {
-        case let .text(text): textLength = text.utf16.count
-        case let .attributedText(text): textLength = text.length
-        }
+        guard simpleContent != nil else { return }
+        replaceSimpleTextActions(actions.compactMap { identifier, range in
+            RichAction(legacyIdentifier: identifier).map { ($0, range) }
+        })
+    }
+
+    private func replaceSimpleTextActions(_ actions: [SimpleTextAction]) {
         simpleTextActions.removeAll()
         simpleTextActionHandlers.removeAll()
-        for action in actions.sorted(by: { $0.range.location < $1.range.location }) {
-            guard !action.identifier.isEmpty,
-                  action.range.location >= 0,
-                  action.range.length > 0,
-                  NSMaxRange(action.range) <= textLength,
-                  !simpleTextActions.contains(where: {
-                      NSIntersectionRange($0.range, action.range).length > 0
-                  }) else { continue }
-            simpleTextActions.append(SimpleTextAction(
-                identifier: action.identifier,
-                range: action.range
-            ))
+        var previousEnd = 0
+        for entry in actions.sorted(by: { $0.range.location < $1.range.location }) {
+            guard isValidActionRange(entry.range), entry.range.location >= previousEnd else { continue }
+            simpleTextActions.append(entry)
+            previousEnd = NSMaxRange(entry.range)
         }
         updateSimpleContent()
     }
@@ -237,18 +257,12 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         updateSimpleContent()
     }
 
+    public func action(at point: CGPoint) -> RichAction? {
+        currentLayout?.interactiveRegion(at: point)?.action
+    }
+
     public func actionIdentifier(at point: CGPoint) -> String? {
-        guard let layout = currentLayout else { return nil }
-        for runBox in layout.runBoxes.reversed() {
-            guard let textRunBox = runBox as? RichTextRunBox,
-                  textRunBox.frame.contains(point) else { continue }
-            let localPoint = CGPoint(
-                x: point.x - textRunBox.frame.minX,
-                y: point.y - textRunBox.frame.minY
-            )
-            return textRunBox.actionIdentifier(at: localPoint)
-        }
-        return nil
+        action(at: point)?.legacyIdentifier
     }
 
     private func scheduleLayout(for snapshot: RichElementSnapshot) {
@@ -258,7 +272,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         let constrainedSize = bounds.size
         layoutTask?.cancel()
         guard laysOutAsynchronously else {
-            apply(layoutEngine.layout(snapshot: snapshot, constrainedTo: constrainedSize))
+            installLayout(layoutEngine.layout(snapshot: snapshot, constrainedTo: constrainedSize))
             return
         }
         layoutTask = Task { [weak self, layoutEngine] in
@@ -267,7 +281,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
             }.value
             guard !Task.isCancelled else { return }
             guard let self, self.generation == requestedGeneration else { return }
-            self.apply(layout)
+            self.installLayout(layout)
         }
     }
 
@@ -278,40 +292,46 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
 
     public func apply(_ snapshot: RichElementSnapshot, layout: RichTextLayout) {
         precondition(snapshot.root.id == layout.rootElementID, "Snapshot and layout must have the same root ID")
-        documentContent = nil
+        resetDocumentContent()
         simpleContent = nil
         simpleTextActions.removeAll()
         simpleTextActionHandlers.removeAll()
         currentSnapshot = snapshot
         usesPrecomputedLayout = true
-        apply(layout)
+        installLayout(layout)
     }
 
     public func apply(_ layout: RichTextLayout) {
+        if documentContent != nil {
+            resetDocumentContent()
+            currentSnapshot = nil
+            usesPrecomputedLayout = true
+        }
+        installLayout(layout)
+    }
+
+    private func installLayout(_ layout: RichTextLayout) {
         generation &+= 1
         layoutTask?.cancel()
-        if displaysAsynchronously && !preservesRenderedContentDuringAsyncUpdates {
-            renderLayer.clearDisplayContents()
-        }
         currentLayout = layout
         lastLayoutWidth = layout.constrainedSize.width
         attachmentManager.apply(layout.attachmentRunBoxes)
         synchronizeImageLoads()
-        selectionController.apply(layout: layout)
+        selectionController?.apply(layout: layout)
         updateAccessibility(using: layout)
-        refreshRenderViewportObservation()
         renderLayer.setNeedsDisplay()
         invalidateIntrinsicContentSize()
     }
 
     public func prepareForReuse() {
-        finishSelectionTouchRouting()
+        renderLayer.updateVisibleRect(nil)
+        renderLayer.suspendsDisplay = false
         generation &+= 1
         layoutTask?.cancel()
         layoutTask = nil
         currentSnapshot = nil
         currentLayout = nil
-        documentContent = nil
+        resetDocumentContent()
         simpleContent = nil
         simpleTextActions.removeAll()
         simpleTextActionHandlers.removeAll()
@@ -321,23 +341,27 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         cancelImageLoads()
         loadedImages.removeAll()
         remoteImageIdentifiers.removeAll()
-        selectionController.clearSelection()
-        selectionMenuPresenter?.dismissCopyMenu(from: self)
+        selectionController?.apply(layout: nil)
         accessibilityElements = nil
-        renderLayer.clearDisplayContents()
+        clearDisplayContents()
+    }
+
+    /// Supply the scroll viewport in this view's bounds coordinates to bound bitmap memory for tall documents.
+    /// Pass nil to restore Core Animation's automatic tiling.
+    public func updateVisibleRect(_ rect: CGRect?) {
+        renderLayer.updateVisibleRect(rect)
     }
 
     public func clearTextSelection() {
-        selectionController.clearSelection()
+        selectionController?.clearSelection()
     }
 
     public func isSelectionHandleTouch(atWindowPoint windowPoint: CGPoint) -> Bool {
-        guard let window else { return false }
-        return selectionController.isTouchingSelectionHandle(at: convert(windowPoint, from: window))
+        selectionController?.isSelectionHandleTouch(atWindowPoint: windowPoint) == true
     }
 
     public func prioritizeSelection(over competingGestureRecognizer: UIGestureRecognizer) {
-        competingGestureRecognizer.require(toFail: selectionController.selectionLongPressGestureRecognizer)
+        ensureSelectionController().prioritizeSelection(over: competingGestureRecognizer)
     }
 
     public override var intrinsicContentSize: CGSize {
@@ -359,7 +383,6 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
 
     public override func layoutSubviews() {
         super.layoutSubviews()
-        refreshRenderViewportObservation()
         guard !usesPrecomputedLayout,
               bounds.width > 0,
               abs(bounds.width - lastLayoutWidth) > 0.5 else { return }
@@ -374,265 +397,53 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
 
     public override func didMoveToWindow() {
         super.didMoveToWindow()
-        observeRenderViewport()
+        selectionController?.didMoveToWindow()
+        if window != nil, renderLayer.suspendsDisplay {
+            renderLayer.suspendsDisplay = false
+            synchronizeImageLoads()
+            renderLayer.setNeedsDisplay()
+        }
     }
 
-    public override func didMoveToSuperview() {
-        super.didMoveToSuperview()
-        observeRenderViewport()
-    }
-
-    public override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard isUserInteractionEnabled,
-              !isHidden,
-              alpha > 0.01,
-              self.point(inside: point, with: event) else { return nil }
-        if selectionController.shouldRouteHandleTouch(at: point) {
-            return self
-        }
-        return super.hitTest(point, with: event)
-    }
-
-    public override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        super.point(inside: point, with: event)
-            || selectionController.shouldRouteHandleTouch(at: point)
-    }
-
-    public override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard activeSelectionTouch == nil,
-              touches.count == 1,
-              let touch = touches.first else {
-            super.touchesBegan(touches, with: event)
-            return
-        }
-        let point = touch.location(in: self)
-        guard selectionController.beginHandleDrag(at: point) else {
-            super.touchesBegan(touches, with: event)
-            return
-        }
-        activeSelectionTouch = touch
-        selectionTouchStartPoint = point
-        didMoveSelectionTouch = false
-    }
-
-    public override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let activeSelectionTouch,
-              touches.contains(where: { $0 === activeSelectionTouch }) else {
-            super.touchesMoved(touches, with: event)
-            return
-        }
-        let point = activeSelectionTouch.location(in: self)
-        if let startPoint = selectionTouchStartPoint,
-           hypot(point.x - startPoint.x, point.y - startPoint.y) >= 1 {
-            didMoveSelectionTouch = true
-        }
-        guard didMoveSelectionTouch else { return }
-        selectionController.moveHandleDrag(to: point, finished: false)
-    }
-
-    public override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let activeSelectionTouch,
-              touches.contains(where: { $0 === activeSelectionTouch }) else {
-            super.touchesEnded(touches, with: event)
-            return
-        }
-        selectionController.endHandleDrag(
-            at: activeSelectionTouch.location(in: self),
-            shouldUpdate: didMoveSelectionTouch
-        )
-        finishSelectionTouchRouting()
-    }
-
-    public override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let activeSelectionTouch,
-              touches.contains(where: { $0 === activeSelectionTouch }) else {
-            super.touchesCancelled(touches, with: event)
-            return
-        }
-        selectionController.cancelHandleDrag()
-        finishSelectionTouchRouting()
+    public override func tintColorDidChange() {
+        super.tintColorDidChange()
+        selectionController?.updateAppearance()
     }
 
     public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         guard previousTraitCollection?.hasDifferentColorAppearance(comparedTo: traitCollection) == true else { return }
         renderLayer.setNeedsDisplay()
-        selectionController.updateAppearance()
+        selectionController?.updateAppearance()
+    }
+
+    func newRenderDisplayTask(forTiling: Bool) -> RichRenderLayerDisplayTask {
+        let task = newRenderDisplayTask()
+        if forTiling {
+            currentTileTask = task
+        } else {
+            task.didDisplay = { [weak self] in
+                self?.currentTileTask = nil
+                self?.didDisplay?()
+            }
+        }
+        return task
     }
 
     func newRenderDisplayTask() -> RichRenderLayerDisplayTask {
         let task = RichRenderLayerDisplayTask()
-        let layout = currentLayout
+        guard let layout = currentLayout else { return task }
         let loadedImages = loadedImages
         let displayTraits = traitCollection
+        task.requiresAtomicBitmap = animatesStreamingChanges
         task.animatesStreamingChanges = animatesStreamingChanges && window != nil && !UIAccessibility.isReduceMotionEnabled
         task.layout = layout
         task.traits = displayTraits
-        task.images = loadedImages
+        task.imageRevision = imageRevision
         task.didDisplay = { [weak self] in self?.didDisplay?() }
         task.display = { context, size, isCancelled in
             displayTraits.performAsCurrent {
-                guard let layout else { return }
-                let clip = context.boundingBoxOfClipPath
-                let visible = CGRect(x: clip.minX, y: size.height - clip.maxY, width: clip.width, height: clip.height)
-                for runBox in layout.runBoxes.reversed() where runBox.frame.intersects(visible) {
-                    guard let decorationRunBox = runBox as? RichDecorationRunBox else { continue }
-                    let color: UIColor
-                    let cornerRadius: CGFloat
-                    let roundsTopCornersOnly: Bool
-                    switch decorationRunBox.decoration {
-                    case let .background(backgroundColor, radius),
-                         let .borderedBackground(backgroundColor, radius, _, _):
-                        color = backgroundColor
-                        cornerRadius = radius
-                        roundsTopCornersOnly = false
-                    case let .topRoundedBackground(backgroundColor, radius):
-                        color = backgroundColor
-                        cornerRadius = radius
-                        roundsTopCornersOnly = true
-                    default:
-                        continue
-                    }
-                    let rect = CGRect(
-                        x: decorationRunBox.frame.minX,
-                        y: size.height - decorationRunBox.frame.maxY,
-                        width: decorationRunBox.frame.width,
-                        height: decorationRunBox.frame.height
-                    )
-                    context.setFillColor(color.cgColor)
-                    if roundsTopCornersOnly {
-                        let radius = min(max(0, cornerRadius), min(rect.width, rect.height) / 2)
-                        let path = CGMutablePath()
-                        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-                        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-                        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
-                        path.addArc(
-                            center: CGPoint(x: rect.maxX - radius, y: rect.maxY - radius),
-                            radius: radius,
-                            startAngle: 0,
-                            endAngle: .pi / 2,
-                            clockwise: false
-                        )
-                        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
-                        path.addArc(
-                            center: CGPoint(x: rect.minX + radius, y: rect.maxY - radius),
-                            radius: radius,
-                            startAngle: .pi / 2,
-                            endAngle: .pi,
-                            clockwise: false
-                        )
-                        path.closeSubpath()
-                        context.addPath(path)
-                    } else {
-                        context.addPath(CGPath(
-                            roundedRect: rect,
-                            cornerWidth: cornerRadius,
-                            cornerHeight: cornerRadius,
-                            transform: nil
-                        ))
-                    }
-                    context.fillPath()
-                }
-                for runBox in layout.runBoxes where runBox.frame.intersects(visible) {
-                    if isCancelled() { return }
-                    if let textRunBox = runBox as? RichTextRunBox {
-                        textRunBox.layout.draw(
-                            in: context,
-                            canvasHeight: size.height,
-                            origin: textRunBox.frame.origin,
-                            imageResolver: { loadedImages[$0] },
-                            isCancelled: isCancelled
-                        )
-                    } else if let imageRunBox = runBox as? RichImageRunBox,
-                              let image = (loadedImages[imageRunBox.element.source.identifier]
-                                  ?? imageRunBox.element.source.image)?.cgImage {
-                        let imageFrame = CGRect(
-                            x: imageRunBox.frame.minX,
-                            y: size.height - imageRunBox.frame.maxY,
-                            width: imageRunBox.frame.width,
-                            height: imageRunBox.frame.height
-                        )
-                        RichImageDrawing.draw(
-                            image,
-                            in: RichImageDrawing.fittedRect(
-                                imageSize: CGSize(width: image.width, height: image.height),
-                                in: imageFrame,
-                                contentInsets: imageRunBox.element.contentInsets,
-                                contentMode: imageRunBox.element.contentMode
-                            ),
-                            tintColor: imageRunBox.element.tintColor,
-                            context: context
-                        )
-                    } else if let decorationRunBox = runBox as? RichDecorationRunBox {
-                        switch decorationRunBox.decoration {
-                        case .background, .topRoundedBackground:
-                            continue
-                        case let .borderedBackground(_, cornerRadius, borderColor, borderWidth):
-                            guard borderWidth > 0 else { continue }
-                            let inset = borderWidth / 2
-                            let rect = CGRect(
-                                x: decorationRunBox.frame.minX,
-                                y: size.height - decorationRunBox.frame.maxY,
-                                width: decorationRunBox.frame.width,
-                                height: decorationRunBox.frame.height
-                            ).insetBy(dx: inset, dy: inset)
-                            context.setStrokeColor(borderColor.cgColor)
-                            context.setLineWidth(borderWidth)
-                            context.addPath(CGPath(
-                                roundedRect: rect,
-                                cornerWidth: max(0, cornerRadius - inset),
-                                cornerHeight: max(0, cornerRadius - inset),
-                                transform: nil
-                            ))
-                            context.strokePath()
-                        case let .verticalGradient(topColor, bottomColor):
-                            let rect = CGRect(
-                                x: decorationRunBox.frame.minX,
-                                y: size.height - decorationRunBox.frame.maxY,
-                                width: decorationRunBox.frame.width,
-                                height: decorationRunBox.frame.height
-                            )
-                            guard let gradient = CGGradient(
-                                colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                                colors: [bottomColor.cgColor, topColor.cgColor] as CFArray,
-                                locations: [0, 1]
-                            ) else { continue }
-                            context.saveGState()
-                            context.clip(to: rect)
-                            context.drawLinearGradient(
-                                gradient,
-                                start: CGPoint(x: rect.midX, y: rect.minY),
-                                end: CGPoint(x: rect.midX, y: rect.maxY),
-                                options: []
-                            )
-                            context.restoreGState()
-                        case let .leadingRule(color, _):
-                            context.setFillColor(color.cgColor)
-                            context.fill(CGRect(
-                                x: decorationRunBox.frame.minX,
-                                y: size.height - decorationRunBox.frame.maxY,
-                                width: decorationRunBox.frame.width,
-                                height: decorationRunBox.frame.height
-                            ))
-                        case .listMarker:
-                            decorationRunBox.textLayout?.draw(
-                                in: context,
-                                canvasHeight: size.height,
-                                origin: decorationRunBox.frame.origin,
-                                imageResolver: { loadedImages[$0] },
-                                isCancelled: isCancelled
-                            )
-                        case let .horizontalRule(color):
-                            context.setFillColor(color.cgColor)
-                            context.fill(CGRect(
-                                x: decorationRunBox.frame.minX,
-                                y: size.height - decorationRunBox.frame.maxY,
-                                width: decorationRunBox.frame.width,
-                                height: decorationRunBox.frame.height
-                            ))
-                        }
-                    }
-                }
+                layout.draw(in: context, size: size, loadedImages: loadedImages, isCancelled: isCancelled)
             }
         }
         return task
@@ -676,13 +487,26 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         )
     }
 
-    func activate(_ actionIdentifier: String) {
+    private func trigger(_ region: RichInteractiveRegion, via trigger: RichActionEvent.Trigger) {
+        activate(region.event(trigger: trigger))
+    }
+
+    func activate(_ event: RichActionEvent, sourceLayout: RichTextLayout? = nil) {
+        let layout = sourceLayout ?? currentLayout
+        if case let .copyCode(nodeID) = event.action.kind,
+           let code = layout?.codeBlockTextByID[nodeID],
+           interactionDelegate?.richView(self, copyCode: code, nodeID: nodeID) != true {
+            codeCopyPasteboard.string = code
+        }
+        let actionIdentifier = event.action.legacyIdentifier
         if let handler = simpleTextActionHandlers[actionIdentifier] {
             handler(self)
+        } else if let actionEventHandler {
+            actionEventHandler(self, event)
         } else if let actionHandler {
             actionHandler(self, actionIdentifier)
         } else {
-            interactionDelegate?.richView(self, didActivate: actionIdentifier)
+            interactionDelegate?.richView(self, didTrigger: event)
         }
     }
 
@@ -698,57 +522,37 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         renderLayer.contentsScale = UIScreen.main.scale
         renderLayer.displaysAsynchronously = false
         renderLayer.needsDisplayOnBoundsChange = true
-        selectionController.isEnabled = isTextSelectionEnabled
-    }
-
-    private func refreshRenderViewportObservation() {
-        let shouldObserve = window != nil && renderLayer.mayNeedViewport
-        if shouldObserve != !viewportObservations.isEmpty {
-            observeRenderViewport()
-        } else {
-            updateRenderViewport()
-        }
-    }
-
-    private func observeRenderViewport() {
-        viewportObservations.removeAll()
-        if window != nil && renderLayer.mayNeedViewport {
-            var ancestor = superview
-            while let view = ancestor {
-                viewportObservations.append(view.observe(\.bounds, options: [.new]) { [weak self] _, _ in
-                    MainActor.assumeIsolated { self?.updateRenderViewport() }
-                })
-                viewportObservations.append(view.observe(\.frame, options: [.new]) { [weak self] _, _ in
-                    MainActor.assumeIsolated { self?.updateRenderViewport() }
-                })
-                ancestor = view.superview
+        addGestureRecognizer(contentTapGesture)
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.window == nil else { return }
+                self.renderLayer.suspendsDisplay = true
+                self.cancelImageLoads()
+                self.remoteImageIdentifiers.removeAll()
+                self.loadedImages.removeAll()
+                self.clearDisplayContents()
             }
         }
-        updateRenderViewport()
     }
 
-    private func updateRenderViewport() {
-        guard renderLayer.mayNeedViewport, let window else { return }
-        var viewportRect = convert(window.bounds, from: window)
-        var ancestor = superview
-        while let view = ancestor {
-            if view.clipsToBounds {
-                viewportRect = viewportRect.intersection(convert(view.bounds, from: view))
-            }
-            ancestor = view.superview
-        }
-        let visibleRect = bounds.intersection(viewportRect)
-        renderLayer.updateVisibleRect(visibleRect, viewportHeight: viewportRect.height)
+    private func clearDisplayContents() {
+        currentTileTask = nil
+        renderLayer.clearDisplayContents()
     }
 
     private func synchronizeImageLoads() {
+        guard !renderLayer.suspendsDisplay else { return }
         let sources = remoteImageSources()
         let identifiers = Set(sources.keys)
         let obsoleteIdentifiers = imageLoadTasks.keys.filter { !identifiers.contains($0) }
         for identifier in obsoleteIdentifiers {
             imageLoadTasks.removeValue(forKey: identifier)?.cancel()
         }
+        let previousCount = loadedImages.count
         loadedImages = loadedImages.filter { identifiers.contains($0.key) }
+        if loadedImages.count != previousCount { imageRevision &+= 1 }
         remoteImageIdentifiers = identifiers
         guard let imageLoader else { return }
         for (identifier, source) in sources
@@ -757,6 +561,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
                 guard let self else { return }
                 self.imageLoadTasks.removeValue(forKey: identifier)
                 guard self.remoteImageIdentifiers.contains(identifier), let image else { return }
+                self.imageRevision &+= 1
                 self.loadedImages[identifier] = image
                 self.renderLayer.setNeedsDisplay()
             }
@@ -782,10 +587,25 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         imageLoadTasks.removeAll()
     }
 
-    private func finishSelectionTouchRouting() {
-        activeSelectionTouch = nil
-        selectionTouchStartPoint = nil
-        didMoveSelectionTouch = false
+    private func ensureSelectionController() -> RichSelectionController {
+        if let selectionController { return selectionController }
+        let controller = RichSelectionController(hostView: self)
+        selectionController = controller
+        return controller
+    }
+
+    @objc private func handleContentTap(_ gesture: UITapGestureRecognizer) {
+        handleContentTap(at: gesture.location(in: self))
+    }
+
+    func handleContentTap(at point: CGPoint) {
+        if currentSelection != nil {
+            clearTextSelection()
+        } else if let region = currentLayout?.interactiveRegion(at: point) {
+            trigger(region, via: .tap)
+        } else {
+            notifyUnconsumedTap()
+        }
     }
 
     private func updateSimpleContentIfNeeded() {
@@ -799,10 +619,11 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         guard let simpleContent else {
             currentSnapshot = nil
             currentLayout = nil
+            accessibilityElements = nil
             lastLayoutWidth = 0
             attachmentManager.prepareForReuse()
-            selectionController.clearSelection()
-            renderLayer.clearDisplayContents()
+            selectionController?.apply(layout: nil)
+            clearDisplayContents()
             invalidateIntrinsicContentSize()
             return
         }
@@ -810,6 +631,8 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         currentSnapshot = snapshot
         guard bounds.width > 0 else {
             currentLayout = nil
+            accessibilityElements = nil
+            selectionController?.apply(layout: nil)
             lastLayoutWidth = 0
             invalidateIntrinsicContentSize()
             return
@@ -818,7 +641,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
             snapshot: snapshot,
             constrainedTo: CGSize(width: bounds.width, height: .greatestFiniteMagnitude)
         )
-        apply(layout)
+        installLayout(layout)
     }
 
     private func updateDocumentContent() {
@@ -826,25 +649,25 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         usesPrecomputedLayout = false
         guard let documentContent else { return }
         guard bounds.width > 0 else {
-            currentSnapshot = nil
-            currentLayout = nil
             lastLayoutWidth = 0
-            attachmentManager.prepareForReuse()
-            selectionController.clearSelection()
-            renderLayer.clearDisplayContents()
-            invalidateIntrinsicContentSize()
             return
         }
         scheduleLayout(for: makeDocumentSnapshot(documentContent, constrainedWidth: bounds.width))
     }
 
-    private let documentRenderer = RichContentRenderer()
+    private func resetDocumentContent() {
+        documentContent = nil
+        documentRenderer?.reset()
+        documentRenderer = nil
+    }
 
     private func makeDocumentSnapshot(
         _ content: DocumentContent,
         constrainedWidth: CGFloat
     ) -> RichElementSnapshot {
-        documentRenderer.render(
+        let renderer = documentRenderer ?? RichContentRenderer()
+        documentRenderer = renderer
+        return renderer.render(
             document: content.document,
             constrainedWidth: constrainedWidth,
             configuration: content.configuration,
@@ -860,7 +683,7 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
         case let .attributedText(text):
             attributedText = applyingSimpleDefaults(to: text)
         }
-        let elements = makeSimpleElements(attributedText)
+        let elements = makeSimpleElements(applyingActions(to: attributedText))
         return RichElementSnapshot(root: RichContainerElement(
             id: "simple-root",
             children: elements
@@ -877,118 +700,69 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
             inlineImages.append((image, range))
         }
         guard !inlineImages.isEmpty else {
-            return makeSimpleTextElements(attributedText)
+            return [makeSimpleTextElement(attributedText)]
         }
 
         var elements: [RichElement] = []
         var location = 0
         for (index, inlineImage) in inlineImages.enumerated() {
             if inlineImage.range.location > location {
-                elements.append(contentsOf: makeSimpleTextElements(
+                elements.append(makeSimpleTextElement(
                     attributedText.attributedSubstring(from: NSRange(
                         location: location,
                         length: inlineImage.range.location - location
                     )),
-                    sourceOffset: location,
-                    idPrefix: "simple-text-before-image-\(index)",
+                    id: "simple-text-before-image-\(index)",
                     display: .inline
                 ))
             }
             elements.append(inlineImage.image.element(
-                id: "simple-inline-image-\(index)-\(inlineImage.image.id)"
+                id: "simple-inline-image-\(index)-\(inlineImage.image.id)",
+                action: RichAction.from(attributes: attributedText.attributes(at: inlineImage.range.location, effectiveRange: nil)) ?? inlineImage.image.action
             ))
             location = NSMaxRange(inlineImage.range)
         }
         if location < attributedText.length {
-            elements.append(contentsOf: makeSimpleTextElements(
+            elements.append(makeSimpleTextElement(
                 attributedText.attributedSubstring(from: NSRange(
                     location: location,
                     length: attributedText.length - location
                 )),
-                sourceOffset: location,
-                idPrefix: "simple-text-after-image",
+                id: "simple-text-after-image",
                 display: .inline
             ))
         }
         return elements
     }
 
-    private func makeSimpleTextElements(
-        _ attributedText: NSAttributedString,
-        sourceOffset: Int = 0,
-        idPrefix: String = "simple-text",
-        display: RichElementDisplay = .block
-    ) -> [RichElement] {
-        guard !simpleTextActions.isEmpty else {
-            return [RichTextElement(
-                id: idPrefix,
-                attributedText: attributedText,
-                maximumNumberOfLines: numberOfLines,
-                lineBreakMode: lineBreakMode,
-                display: display
-            )]
+    private func applyingActions(to text: NSAttributedString) -> NSAttributedString {
+        guard !simpleTextActions.isEmpty else { return text }
+        let result = NSMutableAttributedString(attributedString: text)
+        for entry in simpleTextActions {
+            result.addAttribute(.richAction, value: entry.action, range: entry.range)
         }
-        var elements: [RichElement] = []
-        var location = 0
-        let sourceRange = NSRange(location: sourceOffset, length: attributedText.length)
-        let actions = simpleTextActions.compactMap { action -> SimpleTextAction? in
-            let intersection = NSIntersectionRange(action.range, sourceRange)
-            guard intersection.length > 0 else { return nil }
-            return SimpleTextAction(
-                identifier: action.identifier,
-                range: NSRange(
-                    location: intersection.location - sourceOffset,
-                    length: intersection.length
-                )
-            )
-        }
-        for (index, action) in actions.enumerated() {
-            if action.range.location > location {
-                elements.append(makeSimpleTextElement(
-                    id: "\(idPrefix)-\(index)",
-                    text: attributedText.attributedSubstring(from: NSRange(
-                        location: location,
-                        length: action.range.location - location
-                    ))
-                ))
-            }
-            elements.append(RichAnchorElement(
-                id: "\(idPrefix)-action-\(action.identifier)-\(index)",
-                attributedText: attributedText.attributedSubstring(from: action.range),
-                actionIdentifier: action.identifier,
-                maximumNumberOfLines: numberOfLines,
-                lineBreakMode: lineBreakMode
-            ))
-            location = NSMaxRange(action.range)
-        }
-        if location < attributedText.length {
-            elements.append(makeSimpleTextElement(
-                id: "\(idPrefix)-tail",
-                text: attributedText.attributedSubstring(from: NSRange(
-                    location: location,
-                    length: attributedText.length - location
-                ))
-            ))
-        }
-        return elements
+        return result
     }
 
-    private func makeSimpleTextElement(id: String, text: NSAttributedString) -> RichTextElement {
+    private func makeSimpleTextElement(
+        _ text: NSAttributedString,
+        id: String = "simple-text",
+        display: RichElementDisplay = .block
+    ) -> RichTextElement {
         RichTextElement(
             id: id,
             attributedText: text,
             maximumNumberOfLines: numberOfLines,
-            lineBreakMode: lineBreakMode
+            lineBreakMode: lineBreakMode,
+            display: display
         )
     }
 
     private func removeTextActions(intersecting range: NSRange) {
-        let removedIdentifiers = simpleTextActions.compactMap { action in
-            NSIntersectionRange(action.range, range).length > 0 ? action.identifier : nil
-        }
-        simpleTextActions.removeAll { removedIdentifiers.contains($0.identifier) }
-        for identifier in removedIdentifiers {
-            simpleTextActionHandlers.removeValue(forKey: identifier)
+        simpleTextActions.removeAll { entry in
+            guard NSIntersectionRange(entry.range, range).length > 0 else { return false }
+            simpleTextActionHandlers.removeValue(forKey: entry.action.legacyIdentifier)
+            return true
         }
     }
 
@@ -1039,30 +813,125 @@ public final class RichTextView: UIView, RichRenderLayerDelegate {
     }
 
     private func updateAccessibility(using layout: RichTextLayout) {
-        var elements: [UIAccessibilityElement] = []
-        for runBox in layout.textRunBoxes {
-            let element = UIAccessibilityElement(accessibilityContainer: self)
-            element.accessibilityLabel = runBox.segments.compactMap(\.copyText).joined()
-            element.accessibilityFrameInContainerSpace = runBox.frame
-            element.accessibilityTraits = .staticText
-            elements.append(element)
-        }
-        for runBox in layout.imageRunBoxes {
-            guard let label = runBox.element.accessibilityLabel else { continue }
-            let element = UIAccessibilityElement(accessibilityContainer: self)
+        accessibilityElements = layout.accessibilityElements(for: currentSnapshot, in: self,
+            attachmentView: attachmentManager.view(for:)) { [weak self, weak layout] region in
+                guard let self, let layout, currentLayout === layout else { return false }
+                trigger(region, via: .accessibility)
+                return true
+            }
+    }
+}
+
+@MainActor
+extension RichTextLayout {
+    func accessibilityElements(for snapshot: RichElementSnapshot?, in container: UIView, origin: CGPoint = .zero,
+                               attachmentView: (String) -> UIView?,
+                               activate: @escaping (RichInteractiveRegion) -> Bool) -> [Any] {
+        var elements: [Any] = []
+
+        func appendLabel(_ label: String?, frame: CGRect, traits: UIAccessibilityTraits = .staticText) {
+            guard let label, !label.isEmpty, !frame.isNull else { return }
+            let element = UIAccessibilityElement(accessibilityContainer: container)
             element.accessibilityLabel = label
-            element.accessibilityFrameInContainerSpace = runBox.frame
-            element.accessibilityTraits = .image
+            element.accessibilityFrameInContainerSpace = frame.offsetBy(dx: origin.x, dy: origin.y)
+            element.accessibilityTraits = traits
             elements.append(element)
         }
-        for runBox in layout.attachmentRunBoxes {
-            guard let label = runBox.element.accessibilityLabel else { continue }
-            let element = UIAccessibilityElement(accessibilityContainer: self)
-            element.accessibilityLabel = label
-            element.accessibilityFrameInContainerSpace = runBox.contentFrame
-            element.accessibilityTraits = .staticText
+
+        func appendLink(_ region: RichInteractiveRegion, label: String?) {
+            let element = RichActionAccessibilityElement(accessibilityContainer: container)
+            element.accessibilityLabel = label.flatMap { $0.isEmpty ? nil : $0 } ?? region.action.legacyIdentifier
+            element.accessibilityFrameInContainerSpace = region.rects.reduce(CGRect.null) { $0.union($1) }.offsetBy(dx: origin.x, dy: origin.y)
+            element.accessibilityTraits = .link
+            element.onActivate = { activate(region) }
             elements.append(element)
         }
-        accessibilityElements = elements
+
+        let regionsByID = Dictionary(grouping: interactiveRegions, by: \.elementID)
+        for box in runBoxes {
+            if let run = box as? RichTextRunBox {
+                guard !run.interactiveRegions.isEmpty else {
+                    appendLabel(run.segments.compactMap(\.copyText).joined(), frame: run.frame)
+                    continue
+                }
+                for segment in run.segments {
+                    func appendStaticText(from start: Int, to end: Int) {
+                        guard end > start else { return }
+                        let range = NSRange(location: start - run.globalRange.location, length: end - start)
+                        let frame = run.layout.selectionRects(for: range).reduce(CGRect.null) { $0.union($1) }
+                        let label = range == segment.range ? segment.copyText : (run.text.string as NSString).substring(with: range)
+                        appendLabel(label, frame: frame.offsetBy(dx: run.frame.minX, dy: run.frame.minY))
+                    }
+
+                    var cursor = segment.globalRange.location
+                    for region in regionsByID[segment.elementID] ?? [] {
+                        appendStaticText(from: cursor, to: region.range.location)
+                        let local = NSRange(location: region.range.location - run.globalRange.location, length: region.range.length)
+                        let text = (run.text.string as NSString).substring(with: local)
+                        let label: String?
+                        if text == "\u{FFFC}" {
+                            let image = snapshot?.element(withID: segment.elementID) as? RichImageElement
+                            label = image?.accessibilityLabel ?? segment.copyText
+                        } else {
+                            label = text
+                        }
+                        appendLink(region, label: label)
+                        cursor = NSMaxRange(region.range)
+                    }
+                    appendStaticText(from: cursor, to: NSMaxRange(segment.globalRange))
+                }
+            } else if let image = box as? RichImageRunBox {
+                if let region = regionsByID[image.id]?.first {
+                    appendLink(region, label: image.element.accessibilityLabel ?? image.element.copyText)
+                } else {
+                    appendLabel(image.element.accessibilityLabel, frame: image.frame, traits: .image)
+                }
+            } else if let attachment = box as? RichAttachmentRunBox {
+                if attachment.element.provider is RichTableViewProvider, let table = attachmentView(attachment.id) {
+                    elements.append(table)
+                } else if let code = attachment.element.provider as? RichCodeBlockViewProvider,
+                          let region = regionsByID[code.copyElementID]?.first {
+                    appendLink(region, label: "Copy")
+                } else {
+                    appendLabel(attachment.element.accessibilityLabel, frame: attachment.contentFrame)
+                }
+            }
+        }
+        return elements
+    }
+}
+
+extension UIView {
+    var enclosingRichTextView: RichTextView? {
+        var view = superview
+        while let current = view {
+            if let richTextView = current as? RichTextView { return richTextView }
+            view = current.superview
+        }
+        return nil
+    }
+}
+
+private final class RichActionAccessibilityElement: UIAccessibilityElement {
+    var onActivate: (() -> Bool)?
+
+    override func accessibilityActivate() -> Bool {
+        onActivate?() ?? false
+    }
+}
+
+@MainActor
+private final class RichContentTapDelegate: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard let host = gestureRecognizer.view as? RichTextView else { return false }
+        return host.currentSelection != nil || touch.view === host
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard let host = gestureRecognizer.view as? RichTextView, host.currentSelection == nil, let otherView = otherGestureRecognizer.view else { return false }
+        return otherView !== host && otherView.isDescendant(of: host)
     }
 }

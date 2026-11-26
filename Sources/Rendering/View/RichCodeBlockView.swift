@@ -4,7 +4,9 @@ import UIKit
 final class RichCodeBlockHeaderView: UIView {
     nonisolated static let height: CGFloat = 30
 
-    var onCopy: (() -> Void)?
+    nonisolated static func copyFrame(in bounds: CGRect) -> CGRect {
+        CGRect(x: bounds.minX + max(0, bounds.width - 48), y: bounds.minY, width: min(44, bounds.width), height: height)
+    }
 
     private lazy var languageLabel: UILabel = {
         let label = UILabel()
@@ -25,7 +27,19 @@ final class RichCodeBlockHeaderView: UIView {
         let control = UIControl()
         control.accessibilityLabel = "Copy"
         control.accessibilityTraits = .button
-        control.addTarget(self, action: #selector(copyCode), for: .touchUpInside)
+        control.addAction(UIAction { [weak self] _ in
+            guard let self, let host = enclosingRichTextView else { return }
+            let point = CGPoint(x: copyControl.frame.midX, y: copyControl.frame.midY)
+            var ancestor = superview
+            while let view = ancestor, view !== host {
+                if let canvas = view as? RichTableCanvas {
+                    canvas.handleTap(at: convert(point, to: canvas))
+                    return
+                }
+                ancestor = view.superview
+            }
+            host.handleContentTap(at: convert(point, to: host))
+        }, for: .touchUpInside)
         control.addSubview(copyIconView)
         return control
     }()
@@ -56,23 +70,18 @@ final class RichCodeBlockHeaderView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         languageLabel.frame = CGRect(x: 16, y: 0, width: max(0, bounds.width - 68), height: bounds.height)
-        copyControl.frame = CGRect(x: max(0, bounds.width - 48), y: 0, width: 44, height: bounds.height)
+        copyControl.frame = Self.copyFrame(in: bounds)
         copyIconView.frame = CGRect(x: 10, y: (bounds.height - 24) / 2, width: 24, height: 24)
         dividerView.frame = CGRect(x: 0, y: max(0, bounds.height - 1), width: bounds.width, height: 1)
     }
 
-    @objc private func copyCode() {
-        onCopy?()
-    }
 }
-
 
 @MainActor
 final class RichCodeBlockView: UIView {
     private let headerView = RichCodeBlockHeaderView()
     private let codeScrollView = UIScrollView()
     private let codeTextView = RichTextView()
-    private var code = ""
     private var headerHeight: CGFloat = 0
     private var contentInsets = RichContainerInsets.zero
 
@@ -88,14 +97,12 @@ final class RichCodeBlockView: UIView {
 
     func apply(
         attributedCode: NSAttributedString,
-        code: String,
         language: String?,
         backgroundColor: UIColor,
         contentInsets: RichContainerInsets,
         cornerRadius: CGFloat
     ) {
         self.backgroundColor = backgroundColor
-        self.code = code
         self.contentInsets = contentInsets
         layer.cornerRadius = max(0, cornerRadius)
         let language = language?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -126,15 +133,17 @@ final class RichCodeBlockView: UIView {
         codeScrollView.contentSize = contentSize
     }
 
+    func prepareForReuse() {
+        codeTextView.prepareForReuse()
+        codeScrollView.contentOffset = .zero
+        transform = .identity
+    }
+
     private func configure() {
         clipsToBounds = true
         layer.borderWidth = 1
         layer.borderColor = UIColor.separator.cgColor
 
-        headerView.onCopy = { [weak self] in
-            guard let self else { return }
-            UIPasteboard.general.string = code
-        }
         addSubview(headerView)
 
         codeScrollView.showsHorizontalScrollIndicator = true
@@ -162,24 +171,27 @@ final class RichCodeBlockView: UIView {
 final class RichCodeBlockViewProvider: RichAttachmentViewProvider, @unchecked Sendable {
     static let reuseIdentifier = "RichTextView.CodeBlock"
 
+    let copyAction: RichAction
+    let copyElementID: String
     let requiredHeight: CGFloat
     private let attributedCode: NSAttributedString
-    private let code: String
     private let language: String?
     private let backgroundColor: UIColor
     private let contentInsets: RichContainerInsets
     private let cornerRadius: CGFloat
 
     init(
+        nodeID: String,
+        copyAction: RichAction,
         attributedCode: NSAttributedString,
-        code: String,
         language: String?,
         backgroundColor: UIColor,
         contentInsets: RichContainerInsets,
         cornerRadius: CGFloat
     ) {
+        self.copyAction = copyAction
+        copyElementID = "\(nodeID)/copy"
         self.attributedCode = NSAttributedString(attributedString: attributedCode)
-        self.code = code
         self.language = language
         self.backgroundColor = backgroundColor
         self.contentInsets = contentInsets
@@ -188,6 +200,14 @@ final class RichCodeBlockViewProvider: RichAttachmentViewProvider, @unchecked Se
             for: attributedCode,
             contentInsets: contentInsets
         ).height + ((language?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? RichCodeBlockHeaderView.height : 0)
+    }
+
+    func copyRegion(in box: RichAttachmentRunBox) -> RichInteractiveRegion? {
+        guard language?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return nil }
+        return RichInteractiveRegion(
+            action: copyAction, elementID: copyElementID, range: box.globalRange,
+            rects: [RichCodeBlockHeaderView.copyFrame(in: box.contentFrame.integral)]
+        )
     }
 
     @MainActor
@@ -200,7 +220,6 @@ final class RichCodeBlockViewProvider: RichAttachmentViewProvider, @unchecked Se
         guard let view = view as? RichCodeBlockView else { return }
         view.apply(
             attributedCode: attributedCode,
-            code: code,
             language: language,
             backgroundColor: backgroundColor,
             contentInsets: contentInsets,
@@ -210,7 +229,7 @@ final class RichCodeBlockViewProvider: RichAttachmentViewProvider, @unchecked Se
 
     @MainActor
     func prepareForReuse(_ view: UIView) {
-        view.transform = .identity
+        (view as? RichCodeBlockView)?.prepareForReuse()
     }
 
     static func requiredContentSize(

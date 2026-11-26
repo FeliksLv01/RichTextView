@@ -59,6 +59,10 @@ public struct RichTableStyle: Equatable, @unchecked Sendable {
         self.headerBackgroundColor = headerBackgroundColor
     }
 
+    var maximumCellContentWidth: CGFloat {
+        max(1, maximumColumnWidth - cellInsets.left - cellInsets.right)
+    }
+
     public static let standard = RichTableStyle()
 }
 

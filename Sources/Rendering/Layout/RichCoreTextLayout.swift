@@ -11,8 +11,7 @@ final class RichCoreTextLayout: @unchecked Sendable {
     }
 
     let attributedText: NSAttributedString
-    let framesetter: CTFramesetter
-    let frame: CTFrame
+    let drawingID = UUID()
     let size: CGSize
     let lines: [LineFragment]
 
@@ -23,8 +22,8 @@ final class RichCoreTextLayout: @unchecked Sendable {
         lineBreakMode: NSLineBreakMode = .byWordWrapping
     ) {
         guard attributedText.length > 0, constrainedWidth > 0 else { return nil }
-        self.attributedText = NSAttributedString(attributedString: attributedText)
-        framesetter = CTFramesetterCreateWithAttributedString(self.attributedText)
+        self.attributedText = attributedText.copy() as! NSAttributedString
+        let framesetter = CTFramesetterCreateWithAttributedString(self.attributedText)
         // 不折行模式（.byClipping）：用超大宽度排版让长行不换行，输出真实内容宽度（可超出约束宽度），
         // 供外层横向滚动承载。其余模式沿用约束宽度排版与 clamp。
         let isNonWrapping = lineBreakMode == .byClipping
@@ -39,7 +38,7 @@ final class RichCoreTextLayout: @unchecked Sendable {
         )
         let fullHeight = max(1, ceil(suggested.height))
         let path = CGPath(rect: CGRect(x: 0, y: 0, width: safeWidth, height: fullHeight), transform: nil)
-        frame = CTFramesetterCreateFrame(
+        let frame = CTFramesetterCreateFrame(
             framesetter,
             CFRange(location: 0, length: attributedText.length),
             path,
@@ -144,16 +143,18 @@ final class RichCoreTextLayout: @unchecked Sendable {
         context.textMatrix = .identity
         context.translateBy(x: origin.x, y: canvasHeight - origin.y - size.height)
         context.clip(to: CGRect(origin: .zero, size: size))
-        drawRunBackgrounds(in: context, isCancelled: isCancelled)
-        for line in lines where CGRect(x: line.frame.minX, y: size.height - line.frame.maxY,
-                                       width: line.frame.width, height: line.frame.height).intersects(context.boundingBoxOfClipPath) {
+        let clip = context.boundingBoxOfClipPath
+        let visibleRect = CGRect(x: clip.minX, y: size.height - clip.maxY, width: clip.width, height: clip.height)
+        let visibleLines = lines.filter { $0.frame.intersects(visibleRect) }
+        drawRunBackgrounds(in: context, lines: visibleLines, isCancelled: isCancelled)
+        for line in visibleLines {
             guard !isCancelled() else { break }
             context.textPosition = line.coreTextOrigin
             CTLineDraw(line.line, context)
         }
-        drawLatex(in: context, isCancelled: isCancelled)
-        drawInlineTextBadges(in: context, isCancelled: isCancelled)
-        drawInlineImages(in: context, imageResolver: imageResolver, isCancelled: isCancelled)
+        drawLatex(in: context, lines: visibleLines, isCancelled: isCancelled)
+        drawInlineTextBadges(in: context, lines: visibleLines, isCancelled: isCancelled)
+        drawInlineImages(in: context, lines: visibleLines, imageResolver: imageResolver, isCancelled: isCancelled)
         context.restoreGState()
     }
 
@@ -256,6 +257,55 @@ final class RichCoreTextLayout: @unchecked Sendable {
         }
     }
 
+    /// A logical range can occupy disjoint visual runs in bidirectional or truncated text.
+    func interactiveRects(for range: NSRange) -> [CGRect] {
+        var rects: [CGRect] = []
+        for line in lines where NSIntersectionRange(line.range, range).length > 0 {
+            let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
+            let spans = runs.compactMap { run -> CGRect? in
+                let attributes = CTRunGetAttributes(run) as NSDictionary
+                guard attributes[RichCoreTextAttribute.truncationToken] == nil else { return nil }
+                let indices = CTRunGetStringRange(run)
+                let source = NSRange(location: indices.location + line.stringIndexOffset, length: indices.length)
+                let overlap = NSIntersectionRange(source, range)
+                guard overlap.length > 0, CTRunGetGlyphCount(run) > 0 else { return nil }
+
+                var position = CGPoint.zero
+                CTRunGetPositions(run, CFRange(location: 0, length: 1), &position)
+                let left = position.x
+                let right = left + CGFloat(CTRunGetTypographicBounds(run, CFRange(), nil, nil, nil))
+                guard right > left else { return nil }
+                let isRTL = CTRunGetStatus(run).contains(.rightToLeft)
+                func offset(at index: Int) -> CGFloat {
+                    if index == source.location { return isRTL ? right : left }
+                    if index == NSMaxRange(source) { return isRTL ? left : right }
+                    var secondary: CGFloat = 0
+                    let primary = CTLineGetOffsetForStringIndex(line.line, index - line.stringIndexOffset, &secondary)
+                    return (left...right).contains(primary) ? primary : min(right, max(left, secondary))
+                }
+
+                let start = offset(at: overlap.location)
+                let end = offset(at: NSMaxRange(overlap))
+                let rect = CGRect(x: line.frame.minX + min(start, end), y: line.frame.minY,
+                                  width: abs(end - start), height: line.frame.height)
+                    .intersection(CGRect(origin: .zero, size: size))
+                return rect.isEmpty ? nil : rect
+            }.sorted { $0.minX < $1.minX }
+
+            var merged: CGRect?
+            for span in spans {
+                if let previous = merged, span.minX <= previous.maxX + 0.001 {
+                    merged = previous.union(span)
+                } else {
+                    if let merged { rects.append(merged) }
+                    merged = span
+                }
+            }
+            if let merged { rects.append(merged) }
+        }
+        return rects
+    }
+
     func inlineRunRect(at location: Int) -> CGRect? {
         for line in lines where NSLocationInRange(location, line.range) {
             let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
@@ -347,11 +397,11 @@ final class RichCoreTextLayout: @unchecked Sendable {
 
     private func drawInlineImages(
         in context: CGContext,
+        lines: [LineFragment],
         imageResolver: ((String) -> UIImage?)?,
         isCancelled: () -> Bool
     ) {
-        for line in lines where CGRect(x: line.frame.minX, y: size.height - line.frame.maxY,
-                                       width: line.frame.width, height: line.frame.height).intersects(context.boundingBoxOfClipPath) {
+        for line in lines {
             guard !isCancelled() else { return }
             let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
             for run in runs {
@@ -391,7 +441,7 @@ final class RichCoreTextLayout: @unchecked Sendable {
         }
     }
 
-    private func drawLatex(in context: CGContext, isCancelled: () -> Bool) {
+    private func drawLatex(in context: CGContext, lines: [LineFragment], isCancelled: () -> Bool) {
         for line in lines {
             guard !isCancelled() else { return }
             for run in CTLineGetGlyphRuns(line.line) as? [CTRun] ?? [] {
@@ -405,9 +455,8 @@ final class RichCoreTextLayout: @unchecked Sendable {
         }
     }
 
-    private func drawInlineTextBadges(in context: CGContext, isCancelled: () -> Bool) {
-        for line in lines where CGRect(x: line.frame.minX, y: size.height - line.frame.maxY,
-                                       width: line.frame.width, height: line.frame.height).intersects(context.boundingBoxOfClipPath) {
+    private func drawInlineTextBadges(in context: CGContext, lines: [LineFragment], isCancelled: () -> Bool) {
+        for line in lines {
             guard !isCancelled() else { return }
             let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
             for run in runs {
@@ -465,9 +514,8 @@ final class RichCoreTextLayout: @unchecked Sendable {
         }
     }
 
-    private func drawRunBackgrounds(in context: CGContext, isCancelled: () -> Bool) {
-        for line in lines where CGRect(x: line.frame.minX, y: size.height - line.frame.maxY,
-                                       width: line.frame.width, height: line.frame.height).intersects(context.boundingBoxOfClipPath) {
+    private func drawRunBackgrounds(in context: CGContext, lines: [LineFragment], isCancelled: () -> Bool) {
+        for line in lines {
             guard !isCancelled() else { return }
             let runs = CTLineGetGlyphRuns(line.line) as? [CTRun] ?? []
             for run in runs {

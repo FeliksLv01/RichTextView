@@ -1,5 +1,20 @@
 import UIKit
 
+public struct RichActionEvent: Hashable, Sendable {
+    public enum Trigger: Hashable, Sendable {
+        case tap
+        case accessibility
+    }
+
+    public let action: RichAction
+    public let elementID: String
+    /// UTF-16 range in the originating layout (the cell layout for table content).
+    public let range: NSRange
+    /// Rectangles in the receiving RichTextView's coordinate space.
+    public let rects: [CGRect]
+    public let trigger: Trigger
+}
+
 public struct RichSemanticPosition: Hashable, Sendable {
     public let elementID: String
     public let utf16Offset: Int
@@ -126,6 +141,9 @@ public extension RichSelectionMenuPresenting {
 
 @MainActor
 public protocol RichTextViewInteractionDelegate: AnyObject {
+    func richView(_ richView: RichTextView, didTrigger event: RichActionEvent)
+    /// Return true to handle code copying yourself. The action event is still delivered.
+    func richView(_ richView: RichTextView, copyCode code: String, nodeID: String) -> Bool
     func richView(_ richView: RichTextView, didActivate actionIdentifier: String)
     func richViewDidTapUnconsumedContent(_ richView: RichTextView)
     func richView(_ richView: RichTextView, selectionDidChange selection: RichSelection?)
@@ -139,6 +157,11 @@ public protocol RichTextViewInteractionDelegate: AnyObject {
 }
 
 public extension RichTextViewInteractionDelegate {
+    func richView(_ richView: RichTextView, didTrigger event: RichActionEvent) {
+        self.richView(richView, didActivate: event.action.legacyIdentifier)
+    }
+
+    func richView(_ richView: RichTextView, copyCode code: String, nodeID: String) -> Bool { false }
     func richView(_ richView: RichTextView, didActivate actionIdentifier: String) {}
     func richViewDidTapUnconsumedContent(_ richView: RichTextView) {}
     func richView(_ richView: RichTextView, selectionDidChange selection: RichSelection?) {

@@ -1,62 +1,37 @@
 import UIKit
 
 public final class RichTextLayoutEngine: @unchecked Sendable {
-    private final class TextCacheKey: NSObject {
-        let signature: Int
-        let width: CGFloat
-        let attributedText: NSAttributedString
+    public static let shared = RichTextLayoutEngine(cacheCapacity: 128)
 
-        init(signature: Int, width: CGFloat, attributedText: NSAttributedString) {
-            self.signature = signature
-            self.width = width
-            self.attributedText = attributedText
-        }
-
-        override var hash: Int {
-            var hasher = Hasher()
-            hasher.combine(signature)
-            hasher.combine(width)
-            hasher.combine(attributedText.hash)
-            return hasher.finalize()
-        }
-
-        override func isEqual(_ object: Any?) -> Bool {
-            guard let other = object as? TextCacheKey else { return false }
-            return signature == other.signature
-                && width == other.width
-                && attributedText.isEqual(to: other.attributedText)
-        }
+    private struct Slot: Hashable {
+        let rootID: String
+        let id: String
+        let widthPx: Int
     }
 
-    private final class CachedTextLayout {
-        let text: NSAttributedString
+    private struct CachedTextLayout {
+        var text: NSAttributedString { layout.attributedText }
         let layout: RichCoreTextLayout
-        let size: CGSize
-        let localSegments: [LocalSegment]
-
-        init(
-            text: NSAttributedString,
-            layout: RichCoreTextLayout,
-            size: CGSize,
-            localSegments: [LocalSegment]
-        ) {
-            self.text = text
-            self.layout = layout
-            self.size = size
-            self.localSegments = localSegments
-        }
+        var estimatedCost: Int { 4_096 + text.length * 2 + layout.lines.count * 512 }
+        let width: CGFloat
+        let signature: Int
+        let maximumNumberOfLines: Int
+        let lineBreakMode: NSLineBreakMode
+        var lastAccess: UInt64
     }
 
     private struct LocalSegment {
         let elementID: String
         let range: NSRange
         let copyText: String?
-        let actionIdentifier: String?
+        let action: RichAction?
     }
 
     private struct InlineContent {
         let id: String
+        let isCacheable: Bool
         let text: NSAttributedString
+        let textWithActions: NSAttributedString?
         let segments: [LocalSegment]
         let attachments: [LocalInlineAttachment]
         let signature: Int
@@ -70,19 +45,47 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private let textCache = NSCache<TextCacheKey, CachedTextLayout>()
+    private let cacheCapacity: Int
+    private let costLimit: Int
+    private let widthScale: CGFloat
+    private var cachedCost = 0
+    private var slots: [Slot: CachedTextLayout] = [:]
+    private var access: UInt64 = 0
+    private var cacheObservers: [NSObjectProtocol] = []
 
     public init(cacheCapacity: Int = 128) {
-        let countLimit = max(1, cacheCapacity)
-        textCache.countLimit = countLimit
-        textCache.totalCostLimit = countLimit > Int.max / Self.estimatedCostPerEntry
-            ? Int.max
-            : countLimit * Self.estimatedCostPerEntry
+        self.cacheCapacity = max(1, cacheCapacity)
+        let bytesPerEntry = 16 * 1_024
+        costLimit = min(self.cacheCapacity, Int.max / bytesPerEntry) * bytesPerEntry
+        widthScale = max(1, UITraitCollection.current.displayScale)
+        cacheObservers = [UIApplication.didReceiveMemoryWarningNotification, UIApplication.didEnterBackgroundNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+                self?.removeAllCachedLayouts()
+            }
+        }
+    }
+
+    deinit {
+        cacheObservers.forEach(NotificationCenter.default.removeObserver)
+    }
+
+    var cachedLayoutCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return slots.count
     }
 
     public func layout(
         snapshot: RichElementSnapshot,
         constrainedTo constrainedSize: CGSize
+    ) -> RichTextLayout {
+        layout(snapshot: snapshot, constrainedTo: constrainedSize, cachesLayouts: true)
+    }
+
+    func layout(
+        snapshot: RichElementSnapshot,
+        constrainedTo constrainedSize: CGSize,
+        cachesLayouts: Bool
     ) -> RichTextLayout {
         lock.lock()
         defer { lock.unlock() }
@@ -98,7 +101,7 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
         }
 
         let root = snapshot.root
-        var state = LayoutState(width: width)
+        var state = LayoutState(rootID: root.id, width: width, cachesLayouts: cachesLayouts)
         layoutContainer(root, state: &state, isRoot: true)
         state.flushInline(using: self)
 
@@ -108,7 +111,8 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
             constrainedSize: constrainedSize,
             contentSize: CGSize(width: ceil(state.maximumWidth), height: height),
             runBoxes: state.runBoxes,
-            lines: state.lines
+            lines: state.lines,
+            codeBlockTextByID: state.codeBlockTextByID
         )
         return result
     }
@@ -116,7 +120,8 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
     public func removeAllCachedLayouts() {
         lock.lock()
         defer { lock.unlock() }
-        textCache.removeAllObjects()
+        slots.removeAll()
+        cachedCost = 0
     }
 
     private func layoutContainer(
@@ -124,6 +129,9 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
         state: inout LayoutState,
         isRoot: Bool
     ) {
+        if let code = container.codeBlockText {
+            state.codeBlockTextByID[container.id] = code
+        }
         if container.display == .inline {
             state.appendInline(container, using: self)
             return
@@ -228,7 +236,8 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
         case let container as RichContainerElement:
             layoutContainer(container, state: &state, isRoot: false)
         case let latex as RichLatexElement:
-            state.appendTextBlock(makeInlineContent(from: latex.fitting(width: state.width)), spacing: 0, using: self)
+            let content = makeInlineContent(from: latex.fitting(width: state.width), isCacheable: false)
+            state.appendTextBlock(content, spacing: 0, using: self)
         case let text as RichTextElement:
             state.appendTextBlock(makeInlineContent(from: text), spacing: 0, using: self)
         case let image as RichImageElement:
@@ -314,20 +323,30 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
         }
     }
 
-    private func makeInlineContent(from element: RichElement) -> InlineContent {
-        var builder = InlineBuilder()
+    private func makeInlineContent(from element: RichElement, isCacheable: Bool = true) -> InlineContent {
+        var builder = InlineBuilder(isCacheable: isCacheable)
         builder.append(element)
         return builder.content(id: element.id)
     }
 
-    private func textLayout(for content: InlineContent, width: CGFloat) -> CachedTextLayout? {
-        let key = TextCacheKey(
-            signature: content.signature,
-            width: width,
-            attributedText: NSAttributedString(attributedString: content.text)
-        )
-        if let cached = textCache.object(forKey: key) {
-            return cached
+    private func textLayout(for content: InlineContent, rootID: String, width: CGFloat, cachesLayouts: Bool) -> RichCoreTextLayout? {
+        // The same engine can serve main-thread measurement and background layout.
+        // Exact width below also protects wrap boundaries within one pixel slot.
+        let key = cachesLayouts ? Slot(rootID: rootID, id: content.id, widthPx: Int((min(width, 100_000) * widthScale).rounded())) : nil
+        if let key {
+            if content.isCacheable {
+                access &+= 1
+                if var cached = slots[key], cached.width == width,
+                   cached.signature == content.signature,
+                   cached.maximumNumberOfLines == content.maximumNumberOfLines,
+                   cached.lineBreakMode == content.lineBreakMode,
+                   cached.text.isEqual(to: content.text) {
+                    cached.lastAccess = access
+                    slots[key] = cached
+                    return cached.layout
+                }
+            }
+            if let prior = slots.removeValue(forKey: key) { cachedCost -= prior.estimatedCost }
         }
 
         guard let layout = RichCoreTextLayout(
@@ -336,24 +355,24 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
             maximumNumberOfLines: content.maximumNumberOfLines,
             lineBreakMode: content.lineBreakMode
         ) else { return nil }
-        let size = layout.size
+        guard let key, content.isCacheable else { return layout }
         let cached = CachedTextLayout(
-            text: content.text,
             layout: layout,
-            size: size,
-            localSegments: content.segments
+            width: width,
+            signature: content.signature,
+            maximumNumberOfLines: content.maximumNumberOfLines,
+            lineBreakMode: content.lineBreakMode,
+            lastAccess: access
         )
-        textCache.setObject(cached, forKey: key, cost: Self.estimatedCost(of: cached))
-        return cached
-    }
-
-    private static let estimatedCostPerEntry = 16 * 1_024
-
-    private static func estimatedCost(of cached: CachedTextLayout) -> Int {
-        4_096
-            + cached.text.length * MemoryLayout<unichar>.stride
-            + cached.layout.lines.count * 512
-            + cached.localSegments.count * 128
+        guard cached.estimatedCost <= costLimit else { return layout }
+        while slots.count >= cacheCapacity || cachedCost > costLimit - cached.estimatedCost {
+            guard let oldest = slots.min(by: { $0.value.lastAccess < $1.value.lastAccess }) else { break }
+            cachedCost -= oldest.value.estimatedCost
+            slots.removeValue(forKey: oldest.key)
+        }
+        slots[key] = cached
+        cachedCost += cached.estimatedCost
+        return layout
     }
 
     private func clampedSize(_ size: CGSize, maximumWidth: CGFloat) -> CGSize {
@@ -371,9 +390,15 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
         private var hasher = Hasher()
         private var maximumNumberOfLines = 0
         private var lineBreakMode: NSLineBreakMode = .byWordWrapping
+        private var isCacheable: Bool
+
+        init(isCacheable: Bool = true) {
+            self.isCacheable = isCacheable
+        }
 
         mutating func append(_ element: RichElement) {
             hasher.combine(element.id)
+            let action = (element as? RichActionElement)?.action
             switch element {
             case let badge as RichTextBadgeElement:
                 let attachment = RichInlineRunFactory.textBadge(
@@ -391,7 +416,7 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
                     elementID: badge.id,
                     range: range,
                     copyText: badge.copyText,
-                    actionIdentifier: badge.actionIdentifier.isEmpty ? nil : badge.actionIdentifier
+                    action: action
                 ))
                 hasher.combine(badge.attributedText.hash)
                 hasher.combine(badge.contentInsets.top)
@@ -407,6 +432,7 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
                 hasher.combine(badge.borderWidth)
                 hasher.combine(badge.baselineOffset)
             case let textElement as RichTextElement:
+                if textElement is RichLatexElement { isCacheable = false }
                 let attributedText = textElement.attributedText
                 let range = NSRange(location: text.length, length: attributedText.length)
                 text.append(attributedText)
@@ -414,9 +440,9 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
                     elementID: textElement.id,
                     range: range,
                     copyText: textElement.copyText,
-                    actionIdentifier: (textElement as? RichActionElement)?.actionIdentifier
+                    action: action
                 ))
-                hasher.combine(textElement.attributedText.hash)
+                hasher.combine(attributedText.length)
                 if textElement.maximumNumberOfLines > 0 {
                     maximumNumberOfLines = maximumNumberOfLines == 0
                         ? textElement.maximumNumberOfLines
@@ -428,6 +454,7 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
                 hasher.combine(textElement.maximumNumberOfLines)
                 hasher.combine(textElement.lineBreakMode.rawValue)
             case let imageElement as RichImageElement:
+                if imageElement.source.image != nil { isCacheable = false }
                 let attachment = RichInlineRunFactory.image(
                     identifier: imageElement.source.identifier,
                     image: imageElement.source.image,
@@ -443,9 +470,7 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
                     elementID: imageElement.id,
                     range: range,
                     copyText: imageElement.copyText,
-                    actionIdentifier: imageElement.actionIdentifier.isEmpty
-                        ? nil
-                        : imageElement.actionIdentifier
+                    action: action
                 ))
                 hasher.combine(imageElement.source.identifier)
                 hasher.combine(imageElement.size.width)
@@ -481,9 +506,28 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
         }
 
         mutating func content(id: String) -> InlineContent {
-            InlineContent(
+            for segment in segments {
+                hasher.combine(segment.range)
+                hasher.combine(segment.copyText)
+                hasher.combine(segment.action)
+            }
+            // Action-only edits reuse Core Text geometry. Keep the original attributes on the run box.
+            let range = NSRange(location: 0, length: text.length)
+            var drawingText: NSMutableAttributedString?
+            text.enumerateAttribute(.richAction, in: range, options: .longestEffectiveRangeNotRequired) { value, _, stop in
+                guard value != nil else { return }
+                let copy = NSMutableAttributedString(attributedString: text)
+                copy.removeAttribute(.richAction, range: range)
+                drawingText = copy
+                stop.pointee = true
+            }
+            return InlineContent(
                 id: id,
-                text: NSAttributedString(attributedString: text),
+                isCacheable: isCacheable,
+                // The builder is finished. Only a cache miss needs an immutable copy,
+                // which RichCoreTextLayout takes before the text escapes into the cache.
+                text: drawingText ?? text,
+                textWithActions: drawingText == nil ? nil : NSAttributedString(attributedString: text),
                 segments: segments,
                 attachments: attachments,
                 signature: hasher.finalize(),
@@ -494,17 +538,22 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
     }
 
     private struct LayoutState {
+        let rootID: String
+        let cachesLayouts: Bool
         var originX: CGFloat = 0
         var width: CGFloat
         var cursorY: CGFloat = 0
         var maximumWidth: CGFloat = 0
+        var codeBlockTextByID: [String: String] = [:]
         var globalTextLocation = 0
         var runBoxes: [RichRunBox] = []
         var lines: [RichLineBox] = []
         private var inlineElements: [RichElement] = []
 
-        init(width: CGFloat) {
+        init(rootID: String, width: CGFloat, cachesLayouts: Bool) {
+            self.rootID = rootID
             self.width = width
+            self.cachesLayouts = cachesLayouts
         }
 
         mutating func appendInline(_ element: RichElement, using engine: RichTextLayoutEngine) {
@@ -512,11 +561,10 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
         }
 
         mutating func flushInline(using engine: RichTextLayoutEngine) {
-            guard !inlineElements.isEmpty else { return }
+            guard let first = inlineElements.first else { return }
             var builder = InlineBuilder()
             inlineElements.forEach { builder.append($0) }
-            let id = inlineElements.map(\.id).joined(separator: "+")
-            appendTextBlock(builder.content(id: id), spacing: 0, using: engine)
+            appendTextBlock(builder.content(id: first.id), spacing: 0, using: engine)
             inlineElements.removeAll(keepingCapacity: true)
         }
 
@@ -526,14 +574,14 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
             using engine: RichTextLayoutEngine
         ) {
             guard content.text.length > 0,
-                  let cached = engine.textLayout(for: content, width: width) else { return }
-            let frame = CGRect(origin: CGPoint(x: originX, y: cursorY), size: cached.size)
+                  let layout = engine.textLayout(for: content, rootID: rootID, width: width, cachesLayouts: cachesLayouts) else { return }
+            let frame = CGRect(origin: CGPoint(x: originX, y: cursorY), size: layout.size)
             let textLocation = globalTextLocation
             let globalRange = NSRange(
                 location: textLocation,
-                length: cached.text.length
+                length: layout.attributedText.length
             )
-            let segments = cached.localSegments.map { segment in
+            let segments = content.segments.map { segment in
                 RichTextSegment(
                     elementID: segment.elementID,
                     range: segment.range,
@@ -542,20 +590,20 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
                         length: segment.range.length
                     ),
                     copyText: segment.copyText,
-                    actionIdentifier: segment.actionIdentifier
+                    action: segment.action
                 )
             }
             let runBox = RichTextRunBox(
                 id: content.id,
                 frame: frame,
-                text: cached.text,
-                layout: cached.layout,
+                text: content.textWithActions ?? layout.attributedText,
+                layout: layout,
                 segments: segments,
                 globalRange: globalRange
             )
             append(runBox)
             for attachment in content.attachments {
-                guard let localFrame = cached.layout.inlineRunRect(
+                guard let localFrame = layout.inlineRunRect(
                     at: attachment.range.location
                 ) else { continue }
                 let attachmentFrame = localFrame.offsetBy(
@@ -580,7 +628,7 @@ public final class RichTextLayoutEngine: @unchecked Sendable {
                     globalRange: attachmentGlobalRange
                 ))
             }
-            globalTextLocation += cached.text.length + 1
+            globalTextLocation += layout.attributedText.length + 1
             if spacing > 0 { cursorY += spacing }
         }
 

@@ -1,5 +1,30 @@
 import UIKit
 
+public struct RichInteractiveRegion: Hashable, Sendable {
+    public let action: RichAction
+    public let elementID: String
+    /// UTF-16 range in the layout that owns this region.
+    public let range: NSRange
+    public let rects: [CGRect]
+
+    func contains(_ point: CGPoint) -> Bool {
+        rects.contains { $0.contains(point) }
+    }
+
+    func event(trigger: RichActionEvent.Trigger) -> RichActionEvent {
+        RichActionEvent(action: action, elementID: elementID, range: range, rects: rects, trigger: trigger)
+    }
+}
+
+extension RichAction {
+    static func from(attributes: [NSAttributedString.Key: Any]) -> RichAction? {
+        if let action = attributes[.richAction] as? RichAction { return action }
+        if let url = attributes[.link] as? URL { return RichAction(.link(url)) }
+        if let string = attributes[.link] as? String, let url = URL(string: string) { return RichAction(.link(url)) }
+        return nil
+    }
+}
+
 open class RichRunBox: @unchecked Sendable {
     public let id: String
     public let frame: CGRect
@@ -15,7 +40,8 @@ public struct RichTextSegment: Sendable {
     public let range: NSRange
     public let globalRange: NSRange
     public let copyText: String?
-    public let actionIdentifier: String?
+    public let action: RichAction?
+    public var actionIdentifier: String? { action?.legacyIdentifier }
 
     public init(
         elementID: String,
@@ -24,17 +50,34 @@ public struct RichTextSegment: Sendable {
         copyText: String?,
         actionIdentifier: String?
     ) {
+        self.init(
+            elementID: elementID,
+            range: range,
+            globalRange: globalRange,
+            copyText: copyText,
+            action: actionIdentifier.flatMap(RichAction.init(legacyIdentifier:))
+        )
+    }
+
+    public init(
+        elementID: String,
+        range: NSRange,
+        globalRange: NSRange,
+        copyText: String?,
+        action: RichAction?
+    ) {
         self.elementID = elementID
         self.range = range
         self.globalRange = globalRange
         self.copyText = copyText
-        self.actionIdentifier = actionIdentifier
+        self.action = action
     }
 }
 
 public final class RichTextRunBox: RichRunBox, @unchecked Sendable {
     public let text: NSAttributedString
     let layout: RichCoreTextLayout
+    let interactiveRegions: [RichInteractiveRegion]
     public let segments: [RichTextSegment]
     public let globalRange: NSRange
 
@@ -48,18 +91,44 @@ public final class RichTextRunBox: RichRunBox, @unchecked Sendable {
     ) {
         self.text = text
         self.layout = layout
+        interactiveRegions = segments.flatMap { segment in
+            segment.actionRanges(in: text).compactMap { action, range in
+                let rects = layout.interactiveRects(for: range).map {
+                    $0.offsetBy(dx: frame.minX, dy: frame.minY)
+                }
+                guard !rects.isEmpty else { return nil }
+                return RichInteractiveRegion(
+                    action: action,
+                    elementID: segment.elementID,
+                    range: NSRange(location: globalRange.location + range.location, length: range.length),
+                    rects: rects
+                )
+            }
+        }
         self.segments = segments
         self.globalRange = globalRange
         super.init(id: id, frame: frame)
     }
 
     func actionIdentifier(at point: CGPoint) -> String? {
-        segments.reversed().first { segment in
-            guard segment.actionIdentifier != nil else { return false }
-            return layout.selectionRects(for: segment.range).contains {
-                $0.contains(point)
+        let viewPoint = CGPoint(x: point.x + frame.minX, y: point.y + frame.minY)
+        return interactiveRegions.last { $0.contains(viewPoint) }?.action.legacyIdentifier
+    }
+}
+
+private extension RichTextSegment {
+    func actionRanges(in text: NSAttributedString) -> [(RichAction, NSRange)] {
+        if let action { return [(action, range)] }
+        var result: [(RichAction, NSRange)] = []
+        text.enumerateAttributes(in: range, options: .longestEffectiveRangeNotRequired) { attributes, subrange, _ in
+            guard let action = RichAction.from(attributes: attributes) else { return }
+            if let last = result.last, last.0 == action, NSMaxRange(last.1) == subrange.location {
+                result[result.count - 1].1.length += subrange.length
+            } else {
+                result.append((action, subrange))
             }
-        }?.actionIdentifier
+        }
+        return result
     }
 }
 
@@ -105,32 +174,5 @@ public final class RichDecorationRunBox: RichRunBox, @unchecked Sendable {
         self.decoration = decoration
         self.textLayout = textLayout
         super.init(id: id, frame: frame)
-    }
-}
-
-extension RichRunBox {
-    func hasSameDrawing(as other: RichRunBox) -> Bool {
-        guard id == other.id, frame == other.frame else { return false }
-        switch (self, other) {
-        case let (a as RichTextRunBox, b as RichTextRunBox):
-            return a.layout === b.layout
-        case let (a as RichDecorationRunBox, b as RichDecorationRunBox):
-            switch (a.decoration, b.decoration) {
-            case let (.background(ac, ar), .background(bc, br)): return ac == bc && ar == br
-            case let (.topRoundedBackground(ac, ar), .topRoundedBackground(bc, br)): return ac == bc && ar == br
-            case let (.borderedBackground(ac, ar, abc, abw), .borderedBackground(bc, br, bbc, bbw)):
-                return ac == bc && ar == br && abc == bbc && abw == bbw
-            case let (.verticalGradient(at, ab), .verticalGradient(bt, bb)): return at == bt && ab == bb
-            case let (.leadingRule(ac, aw), .leadingRule(bc, bw)): return ac == bc && aw == bw
-            case let (.horizontalRule(ac), .horizontalRule(bc)): return ac == bc
-            case let (.listMarker(at, aw), .listMarker(bt, bw)): return at == bt && aw == bw
-            default: return false
-            }
-        case let (a as RichImageRunBox, b as RichImageRunBox):
-            return a.element === b.element
-        case (is RichAttachmentRunBox, is RichAttachmentRunBox):
-            return true // Attachments draw in their own UIViews.
-        default: return false
-        }
     }
 }

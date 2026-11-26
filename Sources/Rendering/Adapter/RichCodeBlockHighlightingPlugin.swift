@@ -1,6 +1,8 @@
 import Foundation
 
 public protocol RichCodeBlockHighlightingPlugin: AnyObject, Sendable {
+    func releaseIncrementalState(for nodeID: String)
+
     func codeBlockPresentation(
         for code: String,
         language: String,
@@ -8,14 +10,24 @@ public protocol RichCodeBlockHighlightingPlugin: AnyObject, Sendable {
     ) -> RichCodeBlockPresentation?
 }
 
+public extension RichCodeBlockHighlightingPlugin {
+    func releaseIncrementalState(for nodeID: String) {}
+}
+
 public enum RichCodeBlockHighlighting {
+    private static let themedHighlighter = RichSyntaxHighlighter(maximumCachedCodeBlocks: 64)
+
+    public static func releaseIncrementalState(for nodeID: String) {
+        storage.plugin?.releaseIncrementalState(for: nodeID)
+    }
+
     public static func useBuiltIn(
         theme: RichCodeHighlightTheme = .default,
         maximumCachedCodeBlocks: Int = 64
     ) {
         register(RichBuiltInCodeBlockHighlightingPlugin(
             theme: theme,
-            maximumCachedCodeBlocks: maximumCachedCodeBlocks
+            highlighter: RichSyntaxHighlighter(maximumCachedCodeBlocks: maximumCachedCodeBlocks)
         ))
     }
 
@@ -32,7 +44,13 @@ public enum RichCodeBlockHighlighting {
         language: String,
         nodeID: String
     ) -> RichCodeBlockPresentation? {
-        storage.plugin?.codeBlockPresentation(
+        presentation(for: code, language: language, nodeID: nodeID, streaming: false)
+    }
+
+    static func presentation(for code: String, language: String, nodeID: String, streaming: Bool) -> RichCodeBlockPresentation? {
+        guard let plugin = storage.plugin else { return nil }
+        defer { if !streaming { plugin.releaseIncrementalState(for: nodeID) } }
+        return plugin.codeBlockPresentation(
             for: code,
             language: language,
             nodeID: nodeID
@@ -45,9 +63,10 @@ public enum RichCodeBlockHighlighting {
         nodeID: String,
         theme: RichCodeHighlightTheme
     ) -> RichCodeBlockPresentation? {
-        RichBuiltInCodeBlockHighlightingPlugin(
+        defer { themedHighlighter.releaseIncrementalState(for: nodeID) }
+        return RichBuiltInCodeBlockHighlightingPlugin(
             theme: theme,
-            maximumCachedCodeBlocks: 1
+            highlighter: themedHighlighter
         ).codeBlockPresentation(for: code, language: language, nodeID: nodeID)
     }
 

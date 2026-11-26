@@ -49,7 +49,10 @@ public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
     public init() {}
     public func build(node: RichContentNode, children: [RichElement], context: RichContentRenderContext) -> RichElement? {
         let content = node.content(as: RichCodeBlockContent.self) ?? RichCodeBlockContent()
-        let code = node.children.map(\.plainText).joined().trimmingCharacters(in: .newlines)
+        let source = node.children.map(\.plainText).joined()
+        let code = source.trimmingCharacters(in: .newlines)
+        // Exclude the Markdown line terminator before the closing fence, preserving blank lines in the code.
+        let copyText = source.last?.isNewline == true ? String(source.dropLast()) : source
         let presentation = context.resolver?.codeBlockPresentation(
             for: node,
             content: content,
@@ -58,7 +61,8 @@ public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
         ) ?? RichCodeBlockHighlighting.presentation(
             for: code,
             language: content.language,
-            nodeID: node.id
+            nodeID: node.id,
+            streaming: context.streaming || content.isStreaming
         )
         let overflowBehavior = context.configuration.codeBlockOverflowBehavior
         let attributedCode = normalizedCode(
@@ -68,17 +72,20 @@ public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
         )
         let insets = presentation?.contentInsets ?? context.configuration.codeBlockInsets
         let backgroundColor = presentation?.backgroundColor ?? context.configuration.codeBlockBackgroundColor
+        let copyAction = node.action ?? RichAction(.copyCode(nodeID: node.id))
         if overflowBehavior == .horizontalScroll {
             let provider = RichCodeBlockViewProvider(
+                nodeID: node.id,
+                copyAction: copyAction,
                 attributedCode: attributedCode,
-                code: code,
                 language: content.language,
                 backgroundColor: backgroundColor,
                 contentInsets: insets,
                 cornerRadius: presentation?.cornerRadius ?? context.configuration.codeBlockCornerRadius
             )
             return RichContainerElement(
-                id: node.id,
+                codeBlockID: node.id,
+                code: copyText,
                 children: [RichAttachmentElement(
                     id: node.children.first?.id ?? "\(node.id)/code",
                     metrics: RichAttachmentMetrics(
@@ -137,7 +144,7 @@ public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
                         .paragraphStyle: footerStyle
                     ]
                 ),
-                actionIdentifier: "code-block:\(node.id)",
+                action: node.action ?? RichAction(.codeBlock(nodeID: node.id)),
                 copyText: "",
                 display: .block
             ))
@@ -146,6 +153,7 @@ public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
         if !language.isEmpty {
             elements.append(codeHeader(
                 nodeID: node.id,
+                action: copyAction,
                 language: language,
                 width: context.constrainedWidth,
                 configuration: context.configuration,
@@ -164,7 +172,8 @@ public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
             contentInsets: insets
         ))
         return RichContainerElement(
-            id: node.id,
+            codeBlockID: node.id,
+            code: copyText,
             children: elements,
             decoration: .borderedBackground(
                 color: backgroundColor,
@@ -224,6 +233,7 @@ public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
 
     private func codeHeader(
         nodeID: String,
+        action: RichAction,
         language: String,
         width: CGFloat,
         configuration: RichContentRenderingConfiguration,
@@ -261,7 +271,7 @@ public final class RichCodeBlockElementBuilder: RichContentElementBuilding {
             tintColor: configuration.codeBlockTextColor.withAlphaComponent(0.7),
             copyText: "",
             accessibilityLabel: "Copy",
-            actionIdentifier: "copy-code:\(nodeID)"
+            action: action
         )
         return RichContainerElement(
             id: "\(nodeID)/header",

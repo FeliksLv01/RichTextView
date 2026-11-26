@@ -25,6 +25,7 @@ public final class RichTextElementBuilder: RichContentElementBuilding {
             ) ?? explicitForegroundColor ?? context.configuration.textColor,
             .paragraphStyle: richParagraphStyle(context.configuration)
         ]
+        attributes[.richAction] = node.action
         attributes[.backgroundColor] = explicitBackgroundColor
             ?? (content.style.code ? context.configuration.codeBackgroundColor : nil)
         if content.style.underline { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
@@ -40,7 +41,7 @@ public final class RichTextElementBuilder: RichContentElementBuilding {
                 borderColor: context.configuration.inlineCodeBorderColor,
                 borderWidth: context.configuration.inlineCodeBorderWidth,
                 baselineOffset: context.configuration.inlineCodeBaselineOffset,
-                actionIdentifier: ""
+                action: node.action
             )
         }
         return RichTextElement(

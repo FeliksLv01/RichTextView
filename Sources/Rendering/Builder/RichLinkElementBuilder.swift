@@ -28,10 +28,11 @@ public final class RichLinkElementBuilder: RichContentElementBuilding {
             value: context.configuration.linkColor,
             range: NSRange(location: 0, length: text.length)
         )
+        let action = node.action ?? RichAction(URL(string: link.href).map(RichAction.Kind.link) ?? .custom("link:\(link.href)"))
         let anchor = RichAnchorElement(
             id: node.id,
             attributedText: text,
-            actionIdentifier: "link:\(link.href)",
+            action: action,
             copyText: text.string
         )
         guard let image = context.resolver?.linkIconPresentation(for: node, content: link) else { return anchor }
@@ -42,7 +43,8 @@ public final class RichLinkElementBuilder: RichContentElementBuilding {
             contentInsets: image.contentInsets,
             font: context.configuration.font,
             copyText: image.copyText,
-            accessibilityLabel: image.accessibilityLabel
+            accessibilityLabel: image.accessibilityLabel,
+            action: action
         )
         return RichContainerElement(
             id: "\(node.id)-link-container",

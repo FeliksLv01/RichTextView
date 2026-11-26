@@ -26,9 +26,10 @@ public final class RichAttributedInlineImage: @unchecked Sendable {
     public let tintColor: UIColor?
     public let copyText: String?
     public let accessibilityLabel: String?
-    public let actionIdentifier: String
+    public var actionIdentifier: String { action?.legacyIdentifier ?? "" }
+    public let action: RichAction?
 
-    public init(
+    public convenience init(
         id: String,
         source: RichImageSource,
         size: CGSize,
@@ -40,6 +41,32 @@ public final class RichAttributedInlineImage: @unchecked Sendable {
         accessibilityLabel: String? = nil,
         actionIdentifier: String = ""
     ) {
+        self.init(
+            id: id,
+            source: source,
+            size: size,
+            contentInsets: contentInsets,
+            font: font,
+            contentMode: contentMode,
+            tintColor: tintColor,
+            copyText: copyText,
+            accessibilityLabel: accessibilityLabel,
+            action: RichAction(legacyIdentifier: actionIdentifier)
+        )
+    }
+
+    public init(
+        id: String,
+        source: RichImageSource,
+        size: CGSize,
+        contentInsets: UIEdgeInsets = .zero,
+        font: UIFont,
+        contentMode: UIView.ContentMode = .scaleAspectFit,
+        tintColor: UIColor? = nil,
+        copyText: String? = nil,
+        accessibilityLabel: String? = nil,
+        action: RichAction?
+    ) {
         self.id = id
         self.source = source
         self.size = size
@@ -49,7 +76,7 @@ public final class RichAttributedInlineImage: @unchecked Sendable {
         self.tintColor = tintColor
         self.copyText = copyText
         self.accessibilityLabel = accessibilityLabel
-        self.actionIdentifier = actionIdentifier
+        self.action = action
     }
 
     public var attributedString: NSAttributedString {
@@ -64,6 +91,10 @@ public final class RichAttributedInlineImage: @unchecked Sendable {
     }
 
     public func element(id: String? = nil) -> RichImageElement {
+        element(id: id, action: action)
+    }
+
+    func element(id: String?, action: RichAction?) -> RichImageElement {
         RichImageElement(
             id: id ?? self.id,
             source: source,
@@ -74,7 +105,7 @@ public final class RichAttributedInlineImage: @unchecked Sendable {
             tintColor: tintColor,
             copyText: copyText,
             accessibilityLabel: accessibilityLabel,
-            actionIdentifier: actionIdentifier
+            action: action
         )
     }
 }
@@ -102,6 +133,7 @@ public protocol RichImageLoader: AnyObject {
 }
 
 public final class RichImageElement: RichElement, RichActionElement, @unchecked Sendable {
+    let drawingID = UUID()
     public let source: RichImageSource
     public let size: CGSize
     public let contentInsets: UIEdgeInsets
@@ -110,9 +142,10 @@ public final class RichImageElement: RichElement, RichActionElement, @unchecked 
     public let tintColor: UIColor?
     public let copyText: String?
     public let accessibilityLabel: String?
-    let actionIdentifier: String
+    var actionIdentifier: String { action?.legacyIdentifier ?? "" }
+    public let action: RichAction?
 
-    public init(
+    public convenience init(
         id: String,
         source: RichImageSource,
         size: CGSize,
@@ -125,6 +158,34 @@ public final class RichImageElement: RichElement, RichActionElement, @unchecked 
         actionIdentifier: String = "",
         display: RichElementDisplay = .inline
     ) {
+        self.init(
+            id: id,
+            source: source,
+            size: size,
+            contentInsets: contentInsets,
+            font: font,
+            contentMode: contentMode,
+            tintColor: tintColor,
+            copyText: copyText,
+            accessibilityLabel: accessibilityLabel,
+            action: RichAction(legacyIdentifier: actionIdentifier),
+            display: display
+        )
+    }
+
+    public init(
+        id: String,
+        source: RichImageSource,
+        size: CGSize,
+        contentInsets: UIEdgeInsets = .zero,
+        font: UIFont,
+        contentMode: UIView.ContentMode = .scaleAspectFit,
+        tintColor: UIColor? = nil,
+        copyText: String? = nil,
+        accessibilityLabel: String? = nil,
+        action: RichAction?,
+        display: RichElementDisplay = .inline
+    ) {
         self.source = source
         self.size = size
         self.contentInsets = contentInsets
@@ -133,7 +194,7 @@ public final class RichImageElement: RichElement, RichActionElement, @unchecked 
         self.tintColor = tintColor
         self.copyText = copyText
         self.accessibilityLabel = accessibilityLabel
-        self.actionIdentifier = actionIdentifier
+        self.action = action
         super.init(id: id, display: display)
     }
 }
