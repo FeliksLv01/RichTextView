@@ -10,9 +10,11 @@ enum ExampleCase: String, CaseIterable {
     case markdownSelection
     case math
     case markdownStreaming
+    case longDocument
 
     var title: String {
         switch self {
+        case .longDocument: "Long Document (20+ Screens)"
         case .math: "LaTeX formulas"
         case .string: "String and actions"
         case .attributedImageMix: "Attributed image and text"
@@ -25,6 +27,7 @@ enum ExampleCase: String, CaseIterable {
 
     var summary: String {
         switch self {
+        case .longDocument: "48 field notes with wide measurement tables and selectable Swift code"
         case .math: "Inline math, fractions, cases, matrices, and boxed answers"
         case .string: "Multiline text, truncation, and tappable ranges"
         case .attributedImageMix: "Styled runs and inline images in NSAttributedString"
@@ -37,6 +40,8 @@ enum ExampleCase: String, CaseIterable {
 
     var note: String {
         switch self {
+        case .longDocument:
+            "Scroll between field notes and watch the memory reading. Swipe a table sideways, copy a Swift sample, or drag a selection across paragraphs."
         case .math:
             "Native formula drawing with selection and copy. Tap Replay to watch partially received formulas grow."
         case .string:
@@ -65,6 +70,12 @@ enum ExampleCase: String, CaseIterable {
         resolver: any RichContentPresentationResolving
     ) {
         switch self {
+        case .longDocument:
+            let snapshot = RichContentRenderer().render(document: Self.longDocumentContent,
+                constrainedWidth: constrainedWidth, configuration: Self.renderingConfiguration, resolver: resolver).snapshot
+            let layout = RichTextLayoutEngine.shared.layout(snapshot: snapshot,
+                constrainedTo: CGSize(width: constrainedWidth, height: .greatestFiniteMagnitude))
+            richTextView.apply(snapshot, layout: layout)
         case .math:
             let parsed = RichMarkdownParser(imageSize: CGSize(width: 24, height: 24)).parse(Self.mathMarkdown, documentID: "math-example")
             apply(document: parsed.document, to: richTextView, constrainedWidth: constrainedWidth, resolver: resolver)
@@ -332,6 +343,47 @@ enum ExampleCase: String, CaseIterable {
             ]
         )
     )
+
+    private static let longDocumentContent: RichContentDocument = {
+        var sections: [String] = []
+        let instruments = ["Pressure", "Wind speed", "Air temperature", "Humidity", "Rainfall", "Visibility",
+                           "Soil temperature", "Solar radiation", "Wind direction", "Dew point", "Cloud cover", "Battery voltage"]
+        func row(_ values: [String]) -> String { "| " + values.joined(separator: " | ") + " |" }
+        for station in 1...48 {
+            sections.append("""
+            ## Field station \(station)
+
+            The morning survey records conditions along the coastal transect. Read the [station protocol](https://www.weather.gov/) before comparing the inland sensors with the instruments on the pier.
+
+            > The shore team records a second reading after the tide turns. A change in wind direction can explain a sudden difference between neighboring stations.
+
+            - Check the calibration date and record the reference reading.
+            - Compare the last three observations and flag missing samples.
+            - Send the completed log to the next watch.
+
+            ```swift
+            let station = \(station)
+            let readings = [12.4, 12.8, 13.1]
+            let mean = readings.reduce(0, +) / Double(readings.count)
+            print(station, mean)
+            ```
+            """)
+            if station.isMultiple(of: 8) {
+                var table = [row(instruments), row(instruments.map { _ in "---" })]
+                for sample in 1...36 {
+                    table.append(row(instruments.indices.map { column in
+                        column == 0 ? "[Sample \(sample)](https://www.weather.gov/)" : "\(station * sample + column)"
+                    }))
+                }
+                sections.append(table.joined(separator: "\n"))
+            }
+        }
+        let parsed = RichMarkdownParser(imageSize: CGSize(width: 24, height: 24)).parse(sections.joined(separator: "\n\n"), documentID: "field-notes")
+        let author = RichContentNode(id: "field-team", type: .mention,
+            content: RichMentionContent(id: "coastal-team", name: "Coastal team", mentionType: "user"))
+        let byline = RichContentNode(id: "field-byline", type: .paragraph, children: [author])
+        return RichContentDocument(id: "field-notes", children: [byline] + parsed.document.root.children)
+    }()
 
     private static let markdown = """
     # Markdown document

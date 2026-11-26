@@ -114,8 +114,8 @@ compares content, builder/resolver inputs, child elements, width, traits, and
 configuration before reusing an element. Changes to those inputs can invalidate
 reuse. Math measurement uses a bounded cache. The view guards asynchronous
 layout results with a generation, and the drawing layer rejects obsolete
-display work. When asynchronous drawing is enabled, it keeps the previous
-bitmap while changed tiles are prepared. Message lifecycle, stream-part
+display work. Small views replace their bitmap atomically. Large views use
+Core Animation tiles and redraw the changed region on demand. Message lifecycle, stream-part
 merging, and typewriter pacing remain application concerns.
 
 The Example typewriter parses each growing source prefix, passes `streaming`
@@ -138,7 +138,10 @@ without changing the declared image geometry.
 `RichTextViewInteractionDelegate` receives element actions and selection
 callbacks. Selection uses semantic positions and ranges to map a selection
 across CoreText runs and rebase it after layout changes while element IDs and
-intra-element offsets remain valid. Applications can customize selection menus
+intra-element offsets remain valid. Long presses and handle drags retain their
+anchors in the same semantic coordinates. The highlight scrolls with its text.
+Each window hosts the active selection’s two handles in a pass-through overlay
+clipped to the vertical scroll viewport. Applications can customize selection menus
 through `RichSelectionMenuPresenting`.
 
 ## Threading

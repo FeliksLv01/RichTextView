@@ -15,6 +15,7 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
     }
     private let streamingRenderer = RichContentRenderer()
     private let streamingLayoutEngine = RichTextLayoutEngine()
+    private var memoryTimer: Timer?
     private var renderedWidth: CGFloat = 0
     private var followsStreamingContent = true
     private var needsStreamingScrollToBottom = false
@@ -48,6 +49,14 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if example == .longDocument {
+            let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateMemoryReading() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            memoryTimer = timer
+            updateMemoryReading()
+        }
         if example == .markdownStreaming || (example == .math && ProcessInfo.processInfo.arguments.contains("--replay")) {
             markdownTypewriter.start()
         }
@@ -55,6 +64,8 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        memoryTimer?.invalidate()
+        memoryTimer = nil
         markdownTypewriter.stop()
     }
 
@@ -87,7 +98,8 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
         noteLabel.frame = CGRect(x: horizontalInset, y: 24, width: contentWidth, height: noteHeight)
 
         let richTextY = noteLabel.frame.maxY + 24
-        let richTextSize = richTextView.sizeThatFits(
+        let measuredSize = example == .longDocument ? richTextView.currentLayout?.contentSize : nil
+        let richTextSize = measuredSize ?? richTextView.sizeThatFits(
             CGSize(width: contentWidth, height: .greatestFiniteMagnitude)
         )
         richTextView.frame = CGRect(
@@ -100,6 +112,7 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
             width: scrollView.bounds.width,
             height: richTextView.frame.maxY + 40
         )
+        updateLongDocumentViewport()
         if needsStreamingScrollToBottom {
             needsStreamingScrollToBottom = false
             scrollToBottom()
@@ -192,7 +205,27 @@ final class ExampleDetailViewController: UIViewController, UIScrollViewDelegate 
         needsStreamingScrollToBottom = false
     }
 
+    private func updateMemoryReading() {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout.size(ofValue: info) / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        if result == KERN_SUCCESS {
+            navigationItem.prompt = String(format: "Physical footprint · %.1f MB", Double(info.phys_footprint) / 1_000_000)
+        }
+    }
+
+    private func updateLongDocumentViewport() {
+        guard example == .longDocument else { return }
+        let viewport = scrollView.bounds.inset(by: scrollView.adjustedContentInset)
+        richTextView.updateVisibleRect(scrollView.convert(viewport, to: richTextView))
+    }
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateLongDocumentViewport()
         guard example == .markdownStreaming,
               scrollView.isTracking || scrollView.isDecelerating else { return }
         followsStreamingContent = isNearBottom

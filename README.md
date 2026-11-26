@@ -220,17 +220,15 @@ Each parser call parses the current source. The renderer reuses elements when
 content, children, builder/resolver inputs, width, traits and configuration
 are unchanged. No caller-managed revision or separate cache key is required.
 
-`RichTextLayoutEngine` caches unchanged text layouts, and `RichTextView`
-cancels obsolete layout work by generation. When asynchronous drawing is
-enabled, the view keeps the preceding rendered contents visible until the next
-batch of changed tiles is ready by default. Unchanged prefix tiles keep their
-layers and bitmaps, and each tile only draws intersecting text. Set
-`preservesRenderedContentDuringAsyncUpdates = false` if a host prefers an empty
-intermediate state.
+`RichTextView` and table cells share a bounded layout cache. Each document root, block ID,
+and pixel width identify one slot. Streaming updates replace the entry in that slot. A view up
+to 1,024 points in both dimensions keeps its bitmap until the replacement is
+ready. Larger views use Core Animation tiles and invalidate the changed suffix.
+Call `prepareForReuse()` to discard the displayed content immediately.
 
 For visible streaming messages, enable `displaysAsynchronously` and
-`animatesStreamingChanges`. The latter fades only appended words using Core
-Animation masks; it does not parse or lay out text on animation frames. Rewrites,
+`animatesStreamingChanges`. The latter fades appended text in the bitmap mask
+or the affected native tiles using the existing layout. Rewrites,
 reflow, width/style changes and Reduce Motion skip the transition. Disable it for
 history loads and completed messages.
 
